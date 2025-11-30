@@ -1,18 +1,49 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
   <component name="ChangeListManager">
-    <list default="true" id="de5b726d-8b23-4806-9763-19dab680cc46" name="Changes" comment="" />
+    <list default="true" id="de5b726d-8b23-4806-9763-19dab680cc46" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/Official_Seminar.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/Official_Seminar.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Client.py" beforeDir="false" afterPath="$PROJECT_DIR$/Client.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/ClientLauncher.py" beforeDir="false" afterPath="$PROJECT_DIR$/ClientLauncher.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/RtpPacket.py" beforeDir="false" afterPath="$PROJECT_DIR$/RtpPacket.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/Server.py" beforeDir="false" afterPath="$PROJECT_DIR$/Server.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/ServerWorker.py" beforeDir="false" afterPath="$PROJECT_DIR$/ServerWorker.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/VideoStream.py" beforeDir="false" afterPath="$PROJECT_DIR$/VideoStream.py" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
+  </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
-  <component name="ProjectColorInfo"><![CDATA[{
-  "associatedIndex": 5
+  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
+  "lastFilter": {
+    "state": "OPEN",
+    "assignee": "nekphung"
+  }
 }]]></component>
+  <component name="GithubPullRequestsUISettings"><![CDATA[{
+  "selectedUrlAndAccountId": {
+    "url": "https://github.com/nekphung/Official_Seminar.git",
+    "accountId": "800595e7-dfc2-4c2e-8517-cf5c3ce71e9c"
+  }
+}]]></component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 5
+}</component>
   <component name="ProjectId" id="35juUKmPLHcTZZkdiurfhSlKqTx" />
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
@@ -22,6 +53,15 @@
   "keyToString": {
     "ModuleVcsDetector.initialDetectionPerformed": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "git-widget-placeholder": "master",
+    "last_opened_file_path": "D:/Mạng máy tính/Official_Seminar",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
     "vue.rearranger.settings.migration": "true"
   }
 }]]></component>
@@ -40,7 +80,9 @@
       <option name="number" value="Default" />
       <option name="presentableId" value="Default" />
       <updated>1763635818758</updated>
-      <workItem from="1763635819812" duration="2000" />
+      <workItem from="1763635819812" duration="591000" />
+      <workItem from="1764496280145" duration="219000" />
+      <workItem from="1764497516175" duration="1071000" />
     </task>
     <servers />
   </component>
