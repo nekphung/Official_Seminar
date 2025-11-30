@@ -4,16 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="de5b726d-8b23-4806-9763-19dab680cc46" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/Official_Seminar.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/Official_Seminar.iml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Client.py" beforeDir="false" afterPath="$PROJECT_DIR$/Client.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/ClientLauncher.py" beforeDir="false" afterPath="$PROJECT_DIR$/ClientLauncher.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/RtpPacket.py" beforeDir="false" afterPath="$PROJECT_DIR$/RtpPacket.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Server.py" beforeDir="false" afterPath="$PROJECT_DIR$/Server.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/ServerWorker.py" beforeDir="false" afterPath="$PROJECT_DIR$/ServerWorker.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/VideoStream.py" beforeDir="false" afterPath="$PROJECT_DIR$/VideoStream.py" afterDir="false" />
-    </list>
+    <list default="true" id="de5b726d-8b23-4806-9763-19dab680cc46" name="Changes" comment="Thêm mới" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -27,6 +18,12 @@
     </option>
   </component>
   <component name="Git.Settings">
+    <option name="PUSH_TAGS">
+      <GitPushTagMode>
+        <option name="argument" value="--tags" />
+        <option name="title" value="All" />
+      </GitPushTagMode>
+    </option>
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
   <component name="GitHubPullRequestSearchHistory"><![CDATA[{
@@ -82,11 +79,24 @@
       <updated>1763635818758</updated>
       <workItem from="1763635819812" duration="591000" />
       <workItem from="1764496280145" duration="219000" />
-      <workItem from="1764497516175" duration="1071000" />
+      <workItem from="1764497516175" duration="1389000" />
     </task>
+    <task id="LOCAL-00001" summary="Thêm mới">
+      <option name="closed" value="true" />
+      <created>1764498774510</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1764498774518</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
     <option name="version" value="3" />
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="Thêm mới" />
+    <option name="LAST_COMMIT_MESSAGE" value="Thêm mới" />
   </component>
 </project>
