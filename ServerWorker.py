@@ -31,11 +31,26 @@ class ServerWorker:
     def recvRtspRequest(self):
         """Receive RTSP request from the client."""
         connSocket = self.clientInfo['rtspSocket'][0]
+
         while True:
-            data = connSocket.recv(256)
-            if data:
+            try:
+                data = connSocket.recv(256)
+
+                # Client đóng socket → thoát thread mà không crash
+                if not data:
+                    print("RTSP connection closed by client.")
+                    break
+
                 print("Data received:\n" + data.decode("utf-8"))
                 self.processRtspRequest(data.decode("utf-8"))
+
+            except ConnectionResetError:
+                print("RTSP connection reset by client.")
+                break
+
+            except Exception as e:
+                print("RTSP recv error:", e)
+                break
 
     def processRtspRequest(self, data):
         """Process RTSP request sent from the client."""
@@ -48,7 +63,7 @@ class ServerWorker:
         filename = line1[1]
 
         # Get the RTSP sequence number
-        seq = request[1].split(' ')
+        seq = request[1].split(' ') # số yêu cầu
 
         # HANDLE REQUEST TYPES
         if requestType == self.SETUP:
@@ -62,10 +77,10 @@ class ServerWorker:
                     self.replyRtsp(self.FILE_NOT_FOUND_404, seq[1])
 
                 # Generate a randomized RTSP session ID
-                self.clientInfo['session'] = randint(100000, 999999)
+                self.clientInfo['session'] = randint(100000, 999999) # tạo phiên để dễ kiểm soát giữa nhiều client với nhau
 
                 # Send RTSP reply
-                self.replyRtsp(self.OK_200, seq[1])
+                self.replyRtsp(self.OK_200, seq[1]) # gửi phản hồi lại
 
                 # Get the RTP/UDP port from the last line
                 self.clientInfo['rtpPort'] = int(request[2].split('=')[1].strip())
@@ -80,28 +95,26 @@ class ServerWorker:
                 self.replyRtsp(self.OK_200, seq[1])
 
                 # Create a new thread and start sending RTP packets
-                self.clientInfo['event'] = threading.Event()
-                self.clientInfo['worker'] = threading.Thread(target=self.sendRtp)
-                self.clientInfo['worker'].start()
+                self.clientInfo['event'] = threading.Event() # nó như một công tắc để điều khiển các luồng nằm trong một phiên làm việc giữa client và server
+                self.clientInfo['worker'] = threading.Thread(target=self.sendRtp) # bật luồng gửi gói tin
+                self.clientInfo['worker'].start() # bắt đầu luồng gửi các gói tin
 
         elif requestType == self.PAUSE:
             if self.state == self.PLAYING:
                 print("processing PAUSE\n")
                 self.state = self.READY
-
-                self.clientInfo['event'].set()
-
-                self.replyRtsp(self.OK_200, seq[1])
+                #self.clientInfo['event'].set() # bật công tắc để không gửi gói tin nữa
+                self.replyRtsp(self.OK_200, seq[1]) # gửi phản hồi với client
 
         elif requestType == self.TEARDOWN:
             print("processing TEARDOWN\n")
 
-            self.clientInfo['event'].set()
+            self.clientInfo['event'].set() # bật công tắc gửi nguồn
 
-            self.replyRtsp(self.OK_200, seq[1])
+            self.replyRtsp(self.OK_200, seq[1]) # phản hồi
 
             # Close the RTP socket
-            self.clientInfo['rtpSocket'].close()
+            self.clientInfo['rtpSocket'].close() # đóng cổng kết nối
 
         elif requestType == self.DESCRIBE:
             print("processing DESCRIBE\n")

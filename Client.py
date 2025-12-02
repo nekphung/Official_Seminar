@@ -1,6 +1,6 @@
 import sys
 import time
-from time import time
+#from time import time
 from collections import deque
 from tkinter import *
 import tkinter.messagebox as tkMessageBox
@@ -21,7 +21,7 @@ class Client:
     PAUSE = 2
     TEARDOWN = 3
     DESCRIBE = 4
-    MIN_BUFFER_FRAMES = 10
+    MIN_BUFFER_FRAMES = 20
 
     def __init__(self, master, serveraddr, serverport, rtpport, filename):
         self.master = master
@@ -56,6 +56,7 @@ class Client:
 
         self.updateButtons()
         self.setup_caching_system()
+        self.cache_lock = threading.Lock()
         self.connectToServer()  # kết nối tới server để có thể lấy những thông số
 
     def setup_caching_system(self):
@@ -68,7 +69,7 @@ class Client:
 
         # Buffer với caching - TĂNG KÍCH THƯỚC BUFFER
         self.frameBuffer = deque()  # Queue for frames
-        self.bufferSize = 120  # Maximum number of frames in buffer
+        self.bufferSize = 2000  # Maximum number of frames in buffer
 
         # Control flags
         self.isReceivingFrames = False
@@ -80,7 +81,7 @@ class Client:
         self.performance_stats = {
             'frames_received': 0,
             'frames_from_cache': 0,
-            'start_time': time(),
+            'start_time': time.time(),
             'last_frame_time': 0
         }
         # Frame timing control
@@ -189,11 +190,11 @@ class Client:
 
     def exitClient(self):
         """Clean up when exiting"""
-        self.stopFrameReceiver()
-        self.stopPlayback()
+        self.stopFrameReceiver() # dừng luồng nhận frame
+        self.stopPlayback() # dừng luồng phát video
         if self.state != self.INIT:
             self.sendRtspRequest(self.TEARDOWN)
-        self.playEvent.set()
+        self.playEvent.set() # bật công tắt phát video
         try:
             self.master.destroy()
         except:
@@ -202,9 +203,10 @@ class Client:
         self.cleanup_cache()
 
     def pauseMovie(self):
-        if self.state == self.PLAYING: # Nếu trạng thái là đang phát thì gửi yêu cầu tới pause
+        if self.state == self.PLAYING:
             self.sendRtspRequest(self.PAUSE)
-            self.stopPlayback()
+            self.stopPlayback()  # chỉ dừng playFromBuffer
+            print(f"Paused at frame {self.frameNbr}, buffer size {len(self.frameBuffer)}")
 
     """def playMovie(self):
         Play button handler.
@@ -216,58 +218,46 @@ class Client:
             self.sendRtspRequest(self.PLAY)"""
 
     def bufferAndPlay(self):
-        """Xử lý quá trình gửi PLAY, chờ Buffer, và bắt đầu phát"""
-
-        # 1. Reset event (quan trọng cho các lần Play/Pause/Play)
+        """PLAY: gửi lệnh PLAY, chờ buffer >= MIN_BUFFER_FRAMES, rồi phát"""
+        # Reset event
         self.bufferReadyEvent.clear()
 
-        # 2. Gửi lệnh PLAY tới Server
-        print("Sending PLAY request to server...")
+        # Gửi lệnh PLAY tới server
         self.sendRtspRequest(self.PLAY)
 
-        # Đặt trạng thái đang chờ buffer (GUI AN TOÀN)
+        # Bắt đầu nhận frame nếu chưa nhận
+        if not self.isReceivingFrames:
+            self.startFrameReceiver()
+
+        # Cập nhật GUI
         self.master.after(0, lambda: self.statusLabel.config(
             text=f"Status: Buffering... (0/{self.MIN_BUFFER_FRAMES})", fg="orange"))
 
-        # 3. Chờ cho đến khi Buffer đạt ngưỡng tối thiểu
-        print(f"Waiting for buffer to reach {self.MIN_BUFFER_FRAMES} frames...")
+        # Chờ buffer sẵn sàng
+        is_ready = self.bufferReadyEvent.wait(timeout=10)
 
-        # Chờ Event (thay vì vòng lặp ngủ)
-        is_ready = self.bufferReadyEvent.wait(timeout=10)  # Chờ tối đa 10 giây
-
-        # 4. Bắt đầu phát video
-        if is_ready:  # Nếu Event đã được set (đủ 10 frames)
+        if is_ready:
             self.startPlayback()
-            # Cập nhật GUI thành PLAYING (GUI AN TOÀN)
             self.master.after(0, lambda: self.statusLabel.config(
                 text="Status: Playing", fg="green"))
         else:
-            # Xử lý lỗi (GUI AN TOÀN)
             self.master.after(0, lambda: self.statusLabel.config(
                 text="Status: Buffer Error / Timeout", fg="red"))
-            print("Error: Could not fill buffer within timeout or connection failed.")
-
+            print("Buffer not filled in time.")
 
     def playMovie(self):
         """PLAY - Khởi động quá trình Buffering và phát"""
         if self.state == self.READY:
             print("Preparing to Play...")
-
-            # 1. Đảm bảo luồng nhận frames đang chạy
-            if not self.isReceivingFrames:
-                print("Starting frame receiver...")
-                self.startFrameReceiver()
-
-            # 2. Khởi động luồng riêng để xử lý Buffering và Play
-            threading.Thread(target=self.bufferAndPlay, daemon=True).start()
+            threading.Thread(target=self.bufferAndPlay, daemon=True).start() # bắt đầu luồng nhận và phát video
 
     # --- Caching methods ---
     def get_cached_frame(self, frame_hash):
             """Lấy frame từ cache nếu tồn tại"""
             if frame_hash in self.frame_cache:
                 self.cache_hits += 1
-                return self.frame_cache[frame_hash]
-            self.cache_misses += 1
+                return self.frame_cache[frame_hash] # trả về frame đã được lưu trong cache
+            self.cache_misses += 1 # nếu như không lấy trong cache thì sẽ bị mất
             return None
 
     def cache_frame(self, frame_hash, frame_data):
@@ -302,7 +292,7 @@ class Client:
             self.statusLabel.config(text="Status: Receiving frames...")
             print("Starting to receive frames immediately...")
 
-            self.frameReceiverThread = threading.Thread(target=self.receiveAndCacheFrames, daemon=True)
+            self.frameReceiverThread = threading.Thread(target=self.receiveAndCacheFrames, daemon=True) # mở luồng để nhận và cache frame
             self.frameReceiverThread.start()
             print("Frame receiver thread started!")
 
@@ -318,7 +308,7 @@ class Client:
             try:
                 # Giảm timeout để nhận frames nhanh hơn
                 self.rtpSocket.settimeout(0.1)
-                data, addr = self.rtpSocket.recvfrom(65536)
+                data, addr = self.rtpSocket.recvfrom(65536) # nhận dữ liệu từ luồng rtp
 
                 if not data:
                     continue
@@ -353,15 +343,18 @@ class Client:
                         # >>> LOGIC BÁO HIỆU SẴN SÀNG (Đồng bộ) <<<
                         # Nếu event chưa được đặt VÀ buffer đã đạt ngưỡng MIN_BUFFER_FRAMES (10)
                         if not self.bufferReadyEvent.is_set() and len(self.frameBuffer) >= self.MIN_BUFFER_FRAMES:
-                            self.bufferReadyEvent.set()
+                            self.bufferReadyEvent.set() # bật công tắc
 
                     # Cập nhật thống kê hiệu suất
                     self.performance_stats['frames_received'] += 1
-                    self.performance_stats['last_frame_time'] = time()
+                    self.performance_stats['last_frame_time'] = time.time()
 
                     # Cập nhật cache display
                     if currFrameNbr % 10 == 0:
                         self.update_cache_display()
+
+                    with open(f"cache-{frame_hash}.jpg", "wb") as f:
+                        f.write(self.rtpBuffer)
 
                     self.rtpBuffer = b''
 
@@ -377,7 +370,7 @@ class Client:
 
     def stopFrameReceiver(self):
         """Stop receiving frames"""
-        self.isReceivingFrames = False
+        self.isReceivingFrames = False # đang nhận frame là false
         if hasattr(self, 'statusLabel'):
             self.statusLabel.config(text="Status: Stopped")
 
@@ -390,12 +383,12 @@ class Client:
         self.playEvent.clear() # tắt công tắc
 
         # CÁCH CHÍNH XÁC HƠN: Đặt startTime để tính offset từ lần cuối Play
-        self.startTime = time()  # <--- Đặt lại thời gian bắt đầu cho lần Play này
+        self.startTime = time.time()  # <--- Đặt lại thời gian bắt đầu cho lần Play này
 
         print(f"Starting playback with {len(self.frameBuffer)} frames in buffer...")
 
         # Start playback thread
-        self.playbackThread = threading.Thread(target=self.playFromBuffer, daemon=True)
+        self.playbackThread = threading.Thread(target=self.playFromBuffer, daemon=True) # mở luồng chạy từ buffer
         self.playbackThread.start()
 
     def stopPlayback(self):
@@ -403,11 +396,11 @@ class Client:
         if not self.isPlaying:
             return
         self.isPlaying = False
-        self.playEvent.set()
+        self.playEvent.set() # bật công tắt dừng phát,
         self.pausedTime = self.currentPlaybackTime
         print("Playback stopped.")
 
-    def playFromBuffer(self):
+    """def playFromBuffer(self):
         while self.isPlaying and not self.playEvent.is_set():
             currentTime = time()
             elapsed = currentTime - self.lastDisplayTime
@@ -431,7 +424,46 @@ class Client:
                     self.currentPlaybackTime = self.pausedTime + time_since_play_start
                     self.updateTimeLabel()
 
+                    self.lastDisplayTime = currentTime"""
+
+    def playFromBuffer(self):
+        """Phát video từ buffer, giữ frame rate ~24fps"""
+        while self.isPlaying and not self.playEvent.is_set():
+            currentTime = time.time()
+            elapsed = currentTime - self.lastDisplayTime
+            if elapsed >= self.frameInterval:
+                if self.frameBuffer:
+                    # Lấy frame tiếp theo từ buffer
+                    frameNbr, frame_data, frame_hash = self.frameBuffer.popleft()
+                    self.updateBufferLabel()
+
+                    # Cache nếu có
+                    cached_frame = self.get_cached_frame(frame_hash)
+                    if cached_frame:
+                        frame_data = cached_frame
+                        self.performance_stats['frames_from_cache'] += 1
+
+                    # Ghi frame ra file tạm
+                    cachename = self.writeFrame(frame_data)
+
+                    # Cập nhật GUI
+                    try:
+                        self.updateMovie(cachename)
+                    except Exception as e:
+                        print("Failed to update frame:", e)
+
+                    self.frameNbr = frameNbr
+                    print("Current Seq Num: ", self.frameNbr)
+                    # Cập nhật thời gian phát
+                    time_since_play_start = currentTime - self.startTime
+                    self.currentPlaybackTime = self.pausedTime + time_since_play_start
+                    self.updateTimeLabel()
+
                     self.lastDisplayTime = currentTime
+                else:
+                    time.sleep(0.01)
+            else:
+                time.sleep(0.005)
 
     def updateBufferLabel(self):
         """Cập nhật Buffer Label. PHẢI ĐƯỢC GỌI AN TOÀN TỪ LUỒNG PHỤ."""
@@ -545,17 +577,29 @@ class Client:
     def writeFrame(self, data):
         """Write the received frame to a temp image file. Return the image file."""
         cachename = CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
-        file = open(cachename, "wb")
-        file.write(data)
-        file.close()
+
+        # tránh đọc khi đang ghi
+        with self.cache_lock:
+            try:
+                with open(cachename, "wb") as file:
+                    file.write(data)
+            except Exception as e:
+                print("WriteFrame error:", e)
 
         return cachename
 
     def updateMovie(self, imageFile):
         """Update the image file as video frame in the GUI."""
-        photo = ImageTk.PhotoImage(Image.open(imageFile))
-        self.label.configure(image=photo, height=288)
-        self.label.image = photo
+
+        # tránh đọc khi writeFrame đang ghi
+        with self.cache_lock:
+            try:
+                # kiểm tra file có hợp lệ không
+                photo = ImageTk.PhotoImage(Image.open(imageFile))
+                self.label.configure(image=photo, height=288)
+                self.label.image = photo
+            except Exception as e:
+                print("Failed to update frame:", e)
 
     def connectToServer(self):
         """Connect to the Server. Start a new RTSP/TCP session."""
@@ -727,8 +771,8 @@ class Client:
         else: # When the user presses cancel, resume playing.
             self.playMovie() """
 
-    def handler(self):
-        """Handler on explicitly closing the GUI window."""
+    """def handler(self):
+        Handler on explicitly closing the GUI window.
         self.stopPlayback()  # Dừng phát (playFromBuffer)
         self.stopFrameReceiver()  # Dừng nhận (receiveAndCacheFrames)
 
@@ -740,4 +784,18 @@ class Client:
                 print("Resumed playback from buffer.")
             else:
                 # Nếu đang PLAYING (chờ pause ACK) hoặc INIT, thì không làm gì.
-                pass
+                pass"""
+
+    def handler(self):
+        """Xử lý khi đóng GUI"""
+        self.stopPlayback()
+        self.stopFrameReceiver()
+
+        if tkMessageBox.askokcancel("Quit?", "Are you sure you want to quit?"):
+            self.exitClient()
+        else:
+            if self.state == self.READY and len(self.frameBuffer) > 0:
+                # Resume playback từ buffer hiện tại
+                self.startPlayback()
+                print("Resumed playback from buffer.")
+
