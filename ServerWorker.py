@@ -85,21 +85,24 @@ class ServerWorker:
                 # Get the RTP/UDP port from the last line
                 self.clientInfo['rtpPort'] = int(request[2].split('=')[1].strip())
 
+                self.clientInfo["rtpSocket"] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self.clientInfo['event'] = threading.Event()
+                self.clientInfo['worker'] = threading.Thread(target=self.sendRtp)
+                self.clientInfo['worker'].start()
+
         elif requestType == self.PLAY:
             if self.state == self.READY:
                 print("processing PLAY\n")
                 self.state = self.PLAYING
                 # Create a new socket for RTP/UDP
-                self.clientInfo["rtpSocket"] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                # self.clientInfo["rtpSocket"] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
                 self.replyRtsp(self.OK_200, seq[1])
 
-                # Create a new thread and start sending RTP packets
-                self.clientInfo['event'] = threading.Event() # nó như một công tắc để điều khiển các luồng nằm trong một phiên làm việc giữa client và server
-                self.clientInfo['worker'] = threading.Thread(target=self.sendRtp) # bật luồng gửi gói tin
-                self.clientInfo['worker'].start() # bắt đầu luồng gửi các gói tin
+                self.clientInfo['event'].clear()
 
         elif requestType == self.PAUSE:
+
             if self.state == self.PLAYING:
                 print("processing PAUSE\n")
                 self.state = self.READY
@@ -135,16 +138,26 @@ class ServerWorker:
             print("sendRtp: missing event/video/rtp_socket")
             return
 
+        event.clear()
+
         while True:
             # wait short time; if event set -> stop
             was_set = event.wait(0.05)  # chờ một xíu
             if was_set or event.is_set():
+                print("Stopping RTP transmission (TEARDOWN)")
                 break
 
             data = video.nextFrame()  # đọc cái khung tiếp theo
 
             if not data:
-                continue
+                # FIX: Reset video stream khi hết file để tiếp tục gửi
+                try:
+                    video.file.seek(0)
+                    video.frameNum = 0
+                    continue
+                except:
+                    print("Error resetting video stream")
+                    break
 
             frameNumber = video.frameNbr() # lấy ra cái số thứ tự của khung
             frame_size = len(data) # chiều dài của khung theo số nguyên, lấy ra chiều dài của khung

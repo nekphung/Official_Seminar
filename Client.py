@@ -69,7 +69,7 @@ class Client:
 
         # Buffer với caching - TĂNG KÍCH THƯỚC BUFFER
         self.frameBuffer = deque()  # Queue for frames
-        self.bufferSize = 2000  # Maximum number of frames in buffer
+        self.bufferSize = 120  # Maximum number of frames in buffer
 
         # Control flags
         self.isReceivingFrames = False
