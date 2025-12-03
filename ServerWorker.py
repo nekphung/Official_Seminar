@@ -80,21 +80,22 @@ class ServerWorker:
                 self.replyRtsp(self.OK_200, seq[1])
 
                 self.clientInfo['rtpPort'] = int(request[2].split('=')[1].strip())
+                self.clientInfo["rtpSocket"] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+                # Event điều khiển gửi frame
+                self.clientInfo['event'] = threading.Event()
+                self.clientInfo['event'].set()  # ban đầu tạm dừng gửi frame
+
+                # Luồng gửi RTP
+                self.clientInfo['worker'] = threading.Thread(target=self.sendRtp, daemon=True)
+                self.clientInfo['worker'].start()
 
         # --- PLAY ---
         elif requestType == self.PLAY:
             if self.state == self.READY:
                 print("processing PLAY\n")
                 self.state = self.PLAYING
-                # Chỉ tạo socket và luồng nếu chưa có
-                if "rtpSocket" not in self.clientInfo:
-                    self.clientInfo["rtpSocket"] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                    self.clientInfo['event'] = threading.Event()
-                    self.clientInfo['worker'] = threading.Thread(target=self.sendRtp, daemon=True)
-                    self.clientInfo['worker'].start()
-
-                # Bắt đầu gửi frame
-                self.clientInfo['event'].clear()
+                self.clientInfo['event'].clear()  # bắt đầu gửi frame
                 self.replyRtsp(self.OK_200, seq[1])
 
         # --- PAUSE ---
@@ -102,7 +103,6 @@ class ServerWorker:
             if self.state == self.PLAYING:
                 print("processing PAUSE\n")
                 self.state = self.READY
-                # self.clientInfo['event'].set()  # tạm dừng gửi frame
                 self.replyRtsp(self.OK_200, seq[1])
 
         # --- TEARDOWN ---
@@ -136,7 +136,7 @@ class ServerWorker:
 
         while True:
             # wait short time; if event set -> stop
-            was_set = event.wait(0.1)  # chờ một xíu
+            was_set = event.wait(0.05)  # chờ một xíu
             if was_set or event.is_set():
                 print("Stopping RTP transmission (TEARDOWN)")
                 break

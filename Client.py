@@ -91,7 +91,6 @@ class Client:
         self.currentPlaybackTime = 0  # <--- THÊM BIẾN NÀY ĐỂ THEO DÕI THỜI GIAN
         self.startTime = 0  # <--- THÊM BIẾN NÀY
         self.pausedTime = 0  # <--- THÊM BIẾN NÀY: Lưu thời gian đã phát trước khi pause
-        self.bufferReadyEvent = threading.Event()  # <-- Event báo hiệu buffer đã đủ MIN_BUFFER_FRAMES, điều khiển luồng phát video khi nó đủ cái tối thiểu
 
         print("Initialized client-side caching system")
 
@@ -150,22 +149,25 @@ class Client:
         self.timeLabel.config(text=time_str)
 
     def updateButtons(self):
-        # INIT: Describe + Setup
+        """Cập nhật trạng thái nút bấm"""
         if self.state == self.INIT:
             self.setup.config(state="normal")
             self.describe.config(state="normal")
             self.start.config(state="disabled")
             self.pause.config(state="disabled")
             self.teardown.config(state="disabled")
-        # READY: Play + Teardown
+
         elif self.state == self.READY:
             self.setup.config(state="disabled")
             self.describe.config(state="disabled")
-            self.start.config(state="normal")
+            # Play enabled nếu buffer >= MIN_BUFFER_FRAMES hoặc frameNbr > 0 (resume)
+            if len(self.frameBuffer) >= self.MIN_BUFFER_FRAMES or self.frameNbr > 0:
+                self.start.config(state="normal")
+            else:
+                self.start.config(state="disabled")
             self.pause.config(state="disabled")
             self.teardown.config(state="normal")
 
-        # PLAYING: Pause + Teardown
         elif self.state == self.PLAYING:
             self.setup.config(state="disabled")
             self.describe.config(state="disabled")
@@ -208,6 +210,9 @@ class Client:
             self.stopPlayback()  # chỉ dừng playFromBuffer
             print(f"Paused at frame {self.frameNbr}, buffer size {len(self.frameBuffer)}")
             self.statusLabel.config(text="Status: Paused (Buffering...)", fg="orange")
+            # Chuyển trạng thái sang READY
+            self.state = self.READY
+            self.updateButtons()  # cập nhật nút: Play enable, Pause disable
 
     """def playMovie(self):
         Play button handler.
@@ -221,45 +226,39 @@ class Client:
     def playMovie(self):
         """PLAY - Khởi động quá trình Buffering và phát"""
         if self.state == self.READY:
-            print("Preparing to Play...")
-            threading.Thread(target=self.bufferAndPlay, daemon=True).start() # bắt đầu luồng nhận và phát video
+            # Lần đầu Play: chờ buffer >= MIN_BUFFER_FRAMES
+            if len(self.frameBuffer) < self.MIN_BUFFER_FRAMES and self.frameNbr == 0:
+                print(f"Waiting for {self.MIN_BUFFER_FRAMES} frames to buffer before first play...")
+                threading.Thread(target=self.waitBufferThenPlay, daemon=True).start()
+            else:
+                # Resume hoặc buffer đủ: Play ngay
+                self.bufferAndPlay()
+
+    def waitBufferThenPlay(self):
+        """Đợi buffer đủ frame lần đầu rồi Play"""
+        while len(self.frameBuffer) < self.MIN_BUFFER_FRAMES and self.state == self.READY:
+            time.sleep(0.01)
+        if self.state == self.READY:
+            self.bufferAndPlay()
 
     def bufferAndPlay(self):
-        """PLAY: gửi lệnh PLAY, chờ buffer nếu cần"""
+        """Bắt đầu phát video từ buffer ngay lập tức"""
+        if self.state == self.READY:
+            print("Processing PLAY...")
+            self.state = self.PLAYING
 
-        # Lần nào Play cũng gửi RTSP PLAY
-        self.sendRtspRequest(self.PLAY)
+            # Gửi lệnh PLAY tới server
+            self.sendRtspRequest(self.PLAY)
 
-        # Khởi động luồng nhận frame nếu chưa chạy
-        if not self.isReceivingFrames:
-            self.startFrameReceiver()
-
-        # buffer đã đủ => không cần đợi nữa, phát luôn
-        if len(self.frameBuffer) >= self.MIN_BUFFER_FRAMES:
-            print("Buffer already full — skipping initial buffering")
+            # Bắt đầu phát từ buffer
             self.startPlayback()
-            self.master.after(0, lambda: self.statusLabel.config(
-                text="Status: Playing (fast resume)", fg="green"))
-            return
 
-        # Nếu buffer chưa đủ => thực hiện buffer như lần đầu
-        self.bufferReadyEvent.clear()
-        self.master.after(0, lambda: self.statusLabel.config(
-            text="Status: Buffering...", fg="orange"))
-
-        # Chờ buffer đầy
-        is_ready = self.bufferReadyEvent.wait(timeout=10)
-
-        if is_ready:
-            self.startPlayback()
+            # Cập nhật trạng thái GUI
             self.master.after(0, lambda: self.statusLabel.config(
                 text="Status: Playing", fg="green"))
-        else:
-            self.master.after(0, lambda: self.statusLabel.config(
-                text="Status: Buffer Error / Timeout", fg="red"))
-            print("Buffer not filled in time.")
 
         # --- REAL-TIME FRAME RECEIVER ---
+
     def startFrameReceiver(self):
         """Start receiving frames immediately"""
         if not self.isReceivingFrames and self.rtpSocket:
@@ -316,11 +315,7 @@ class Client:
 
                         # Cập nhật GUI buffer ngay lập tức, dù đang pause
                         self.updateBufferLabel()
-
-                        # ======= LẦN ĐẦU TIÊN: đủ 10 frame thì báo READY =======
-                        if not self.bufferReadyEvent.is_set() and len(self.frameBuffer) >= self.MIN_BUFFER_FRAMES:
-                            print(">>> INITIAL BUFFER READY <<<")
-                            self.bufferReadyEvent.set()
+                    self.updateButtons()
 
                     # Cập nhật thống kê
                     self.performance_stats['frames_received'] += 1
