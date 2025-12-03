@@ -65,59 +65,53 @@ class ServerWorker:
         # Get the RTSP sequence number
         seq = request[1].split(' ') # số yêu cầu
 
-        # HANDLE REQUEST TYPES
+        # --- SETUP ---
         if requestType == self.SETUP:
             if self.state == self.INIT:
-                # Update state
                 print("processing SETUP\n")
                 try:
-                    self.clientInfo['videoStream'] = VideoStream(filename, mode = self.mode)
+                    self.clientInfo['videoStream'] = VideoStream(filename, mode=self.mode)
                     self.state = self.READY
                 except IOError:
                     self.replyRtsp(self.FILE_NOT_FOUND_404, seq[1])
+                    return
 
-                # Generate a randomized RTSP session ID
-                self.clientInfo['session'] = randint(100000, 999999) # tạo phiên để dễ kiểm soát giữa nhiều client với nhau
+                self.clientInfo['session'] = randint(100000, 999999)
+                self.replyRtsp(self.OK_200, seq[1])
 
-                # Send RTSP reply
-                self.replyRtsp(self.OK_200, seq[1]) # gửi phản hồi lại
-
-                # Get the RTP/UDP port from the last line
                 self.clientInfo['rtpPort'] = int(request[2].split('=')[1].strip())
 
-                self.clientInfo["rtpSocket"] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                self.clientInfo['event'] = threading.Event()
-                self.clientInfo['worker'] = threading.Thread(target=self.sendRtp)
-                self.clientInfo['worker'].start()
-
+        # --- PLAY ---
         elif requestType == self.PLAY:
             if self.state == self.READY:
                 print("processing PLAY\n")
                 self.state = self.PLAYING
-                # Create a new socket for RTP/UDP
-                # self.clientInfo["rtpSocket"] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                # Chỉ tạo socket và luồng nếu chưa có
+                if "rtpSocket" not in self.clientInfo:
+                    self.clientInfo["rtpSocket"] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    self.clientInfo['event'] = threading.Event()
+                    self.clientInfo['worker'] = threading.Thread(target=self.sendRtp, daemon=True)
+                    self.clientInfo['worker'].start()
 
+                # Bắt đầu gửi frame
+                self.clientInfo['event'].clear()
                 self.replyRtsp(self.OK_200, seq[1])
 
-                self.clientInfo['event'].clear()
-
+        # --- PAUSE ---
         elif requestType == self.PAUSE:
-
             if self.state == self.PLAYING:
                 print("processing PAUSE\n")
                 self.state = self.READY
-                #self.clientInfo['event'].set() # bật công tắc để không gửi gói tin nữa
-                self.replyRtsp(self.OK_200, seq[1]) # gửi phản hồi với client
+                # self.clientInfo['event'].set()  # tạm dừng gửi frame
+                self.replyRtsp(self.OK_200, seq[1])
 
+        # --- TEARDOWN ---
         elif requestType == self.TEARDOWN:
             print("processing TEARDOWN\n")
+            self.clientInfo['event'].set()  # tạm dừng và dừng hoàn toàn luồng
+            self.replyRtsp(self.OK_200, seq[1])
+            self.clientInfo['rtpSocket'].close()
 
-            self.clientInfo['event'].set() # bật công tắc gửi nguồn
-
-            self.replyRtsp(self.OK_200, seq[1]) # phản hồi
-
-            # Close the RTP socket
-            self.clientInfo['rtpSocket'].close() # đóng cổng kết nối
 
         elif requestType == self.DESCRIBE:
             print("processing DESCRIBE\n")
@@ -142,7 +136,7 @@ class ServerWorker:
 
         while True:
             # wait short time; if event set -> stop
-            was_set = event.wait(0.05)  # chờ một xíu
+            was_set = event.wait(0.1)  # chờ một xíu
             if was_set or event.is_set():
                 print("Stopping RTP transmission (TEARDOWN)")
                 break
@@ -150,14 +144,8 @@ class ServerWorker:
             data = video.nextFrame()  # đọc cái khung tiếp theo
 
             if not data:
-                # FIX: Reset video stream khi hết file để tiếp tục gửi
-                try:
-                    video.file.seek(0)
-                    video.frameNum = 0
-                    continue
-                except:
-                    print("Error resetting video stream")
-                    break
+                print("End of video reached. Stopping RTP stream.")
+                break  # dừng luồng, không reset
 
             frameNumber = video.frameNbr() # lấy ra cái số thứ tự của khung
             frame_size = len(data) # chiều dài của khung theo số nguyên, lấy ra chiều dài của khung
