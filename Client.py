@@ -248,6 +248,11 @@ class Client:
             if self.bufferFullPause:
                 # buffer day -> resume receiving
                 self.bufferFullPause = False
+                try:
+                    msg = "BUFFER_READY".encode('utf-8')
+                    self.rtspSocket.sendall(msg)
+                except Exception as e:
+                    print("Failed to notify server:", e)
                 self.startFrameReceiver() # tiep tuc nhan frame
             elif len(self.frameBuffer) < self.MIN_BUFFER_FRAMES:
                 self.statusLabel.config(text="Status: Buffering...", fg="orange")
@@ -350,9 +355,15 @@ class Client:
                         # Buffer full
                         self.bufferFullPause = True
                         self.isReceivingFrames = False # tạm dừng nhận
-                        print("Buffer full. Pausing frame reception until user plays...")
+                        print("Buffer full. Notifying server to pause sending...")
                         self.master.after(0, lambda: self.statusLabel.config(
                             text="Status: Buffer Full - Press Play", fg="orange"))
+                        # gửi thông điệp tới server
+                        try:
+                            msg = "BUFFER_FULL".encode('utf-8')
+                            self.rtspSocket.sendall(msg)
+                        except Exception as e:
+                            print("Failed to notify server:", e)
 
                     # Cập nhật thống kê
                     self.performance_stats['frames_received'] += 1

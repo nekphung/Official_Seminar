@@ -4,7 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="de5b726d-8b23-4806-9763-19dab680cc46" name="Changes" comment="Cập nhật">
+    <list default="true" id="de5b726d-8b23-4806-9763-19dab680cc46" name="Changes" comment="sửa cache">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Client.py" beforeDir="false" afterPath="$PROJECT_DIR$/Client.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/ServerWorker.py" beforeDir="false" afterPath="$PROJECT_DIR$/ServerWorker.py" afterDir="false" />
@@ -89,7 +89,7 @@
       <workItem from="1764656937139" duration="20184000" />
       <workItem from="1764717842555" duration="16176000" />
       <workItem from="1764811697042" duration="18542000" />
-      <workItem from="1764852153206" duration="8936000" />
+      <workItem from="1764852153206" duration="11647000" />
     </task>
     <task id="LOCAL-00001" summary="Thêm mới">
       <option name="closed" value="true" />
@@ -155,7 +155,15 @@
       <option name="project" value="LOCAL" />
       <updated>1764735950945</updated>
     </task>
-    <option name="localTasksCounter" value="9" />
+    <task id="LOCAL-00009" summary="sửa cache">
+      <option name="closed" value="true" />
+      <created>1764861481505</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1764861481505</updated>
+    </task>
+    <option name="localTasksCounter" value="10" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -166,6 +174,7 @@
     <MESSAGE value="update" />
     <MESSAGE value="Cập nhật client" />
     <MESSAGE value="Cập nhật" />
-    <option name="LAST_COMMIT_MESSAGE" value="Cập nhật" />
+    <MESSAGE value="sửa cache" />
+    <option name="LAST_COMMIT_MESSAGE" value="sửa cache" />
   </component>
 </project>
