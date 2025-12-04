@@ -50,7 +50,7 @@ class ServerWorker:
                         self.clientInfo['event'].set()  # tạm dừng
                     else:
                         print("Client buffer ready. Resuming RTP transmission.")
-                        self.clientInfo['event'].clear()  # tiếp tục
+                        self.clientInfo['event'].clear()  # tiếp tục, luồng gửi
                     continue  # không gọi processRtspRequest
 
                 # Nếu không phải thông điệp buffer, xử lý như RTSP request bình thường
@@ -95,7 +95,7 @@ class ServerWorker:
                 self.clientInfo["rtpSocket"] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 # Khởi tạo event để điều khiển gửi frame
                 self.clientInfo['event'] = threading.Event()
-                self.clientInfo['event'].clear()  # ban đầu chưa gửi gì, sẽ chờ PLAY
+                self.clientInfo['event'].clear()  # ban đầu đã gửi rồi
 
                 self.clientInfo['worker'] = threading.Thread(target=self.sendRtp, daemon=True)
                 self.clientInfo['worker'].start()
@@ -113,7 +113,7 @@ class ServerWorker:
             if self.state == self.PLAYING:
                 print("processing PAUSE\n")
                 self.state = self.READY
-               # self.clientInfo['event'].set()  # bật công tắc
+                # self.clientInfo['event'].set()  # bật công tắc, khi bấm pause thì vẫn gửi
                 self.replyRtsp(self.OK_200, seq[1])
 
         # --- TEARDOWN ---
@@ -147,13 +147,20 @@ class ServerWorker:
             # wait short time; if event set -> stop
             was_set = event.wait(0.05)  # chờ một xíu
             if was_set or event.is_set():
-                print("Stopping RTP transmission (TEARDOWN)")
-                break
+                continue  # không break, quay lại vòng lặp chờ Play
 
             data = video.nextFrame()  # đọc cái khung tiếp theo
 
             if not data:
                 print("End of video reached. Stopping RTP stream.")
+                try:
+                    # gửi thông điệp tới client qua RTP socket
+                    end_message = b"END_OF_VIDEO"
+                    address = self.clientInfo['rtspSocket'][1][0]
+                    port = int(self.clientInfo.get('rtpPort', 0))
+                    rtp_socket.sendto(end_message, (address, port))
+                except Exception as e:
+                    print("Error sending END_OF_VIDEO:", e)
                 break  # dừng luồng, không reset
 
             frameNumber = video.frameNbr() # lấy ra cái số thứ tự của khung
