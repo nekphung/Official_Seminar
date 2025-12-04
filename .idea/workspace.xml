@@ -4,7 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="de5b726d-8b23-4806-9763-19dab680cc46" name="Changes" comment="Cập nhật client">
+    <list default="true" id="de5b726d-8b23-4806-9763-19dab680cc46" name="Changes" comment="Cập nhật">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Client.py" beforeDir="false" afterPath="$PROJECT_DIR$/Client.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/ServerWorker.py" beforeDir="false" afterPath="$PROJECT_DIR$/ServerWorker.py" afterDir="false" />
@@ -87,7 +87,9 @@
       <workItem from="1764513473411" duration="459000" />
       <workItem from="1764630357962" duration="2249000" />
       <workItem from="1764656937139" duration="20184000" />
-      <workItem from="1764717842555" duration="14585000" />
+      <workItem from="1764717842555" duration="16176000" />
+      <workItem from="1764811697042" duration="18542000" />
+      <workItem from="1764852153206" duration="8936000" />
     </task>
     <task id="LOCAL-00001" summary="Thêm mới">
       <option name="closed" value="true" />
@@ -145,7 +147,15 @@
       <option name="project" value="LOCAL" />
       <updated>1764730438946</updated>
     </task>
-    <option name="localTasksCounter" value="8" />
+    <task id="LOCAL-00008" summary="Cập nhật">
+      <option name="closed" value="true" />
+      <created>1764735950945</created>
+      <option name="number" value="00008" />
+      <option name="presentableId" value="LOCAL-00008" />
+      <option name="project" value="LOCAL" />
+      <updated>1764735950945</updated>
+    </task>
+    <option name="localTasksCounter" value="9" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -155,6 +165,7 @@
     <MESSAGE value="Thêm mới" />
     <MESSAGE value="update" />
     <MESSAGE value="Cập nhật client" />
-    <option name="LAST_COMMIT_MESSAGE" value="Cập nhật client" />
+    <MESSAGE value="Cập nhật" />
+    <option name="LAST_COMMIT_MESSAGE" value="Cập nhật" />
   </component>
 </project>

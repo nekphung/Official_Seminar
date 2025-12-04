@@ -24,6 +24,10 @@ class ServerWorker:
         self.clientInfo = clientInfo
         self.state = self.INIT
         self.mode = 'normal'
+        self.clientInfo['frameBuffer'] = []  # buffer server lưu frame
+        self.clientInfo['bufferSize'] = 120  # ví dụ buffer tối đa 120 frame
+        self.clientInfo['event_pause'] = threading.Event()  # True nếu đang pause
+        self.clientInfo['event_stop'] = threading.Event()  # True nếu teardown
 
     def run(self): # chạy hàm này
         threading.Thread(target=self.recvRtspRequest, daemon=True).start() # bắt đầu xử lý trong luồng
@@ -81,12 +85,7 @@ class ServerWorker:
 
                 self.clientInfo['rtpPort'] = int(request[2].split('=')[1].strip())
                 self.clientInfo["rtpSocket"] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-                # Event điều khiển gửi frame
-                self.clientInfo['event'] = threading.Event()
-                self.clientInfo['event'].set()  # ban đầu tạm dừng gửi frame
-
-                # Luồng gửi RTP
+                self.clientInfo['event_pause'].set()  # tạm dừng gửi sau khi tạo thread
                 self.clientInfo['worker'] = threading.Thread(target=self.sendRtp, daemon=True)
                 self.clientInfo['worker'].start()
 
@@ -95,7 +94,7 @@ class ServerWorker:
             if self.state == self.READY:
                 print("processing PLAY\n")
                 self.state = self.PLAYING
-                self.clientInfo['event'].clear()  # bắt đầu gửi frame
+                self.clientInfo['event_pause'].clear()  # Bỏ pause → tiếp tục gửi
                 self.replyRtsp(self.OK_200, seq[1])
 
         # --- PAUSE ---
@@ -103,12 +102,13 @@ class ServerWorker:
             if self.state == self.PLAYING:
                 print("processing PAUSE\n")
                 self.state = self.READY
+                self.clientInfo['event_pause'].set()  # Đánh dấu pause
                 self.replyRtsp(self.OK_200, seq[1])
 
         # --- TEARDOWN ---
         elif requestType == self.TEARDOWN:
             print("processing TEARDOWN\n")
-            self.clientInfo['event'].set()  # tạm dừng và dừng hoàn toàn luồng
+            self.clientInfo['event_stop'].set()  # dừng hẳn luồng
             self.replyRtsp(self.OK_200, seq[1])
             self.clientInfo['rtpSocket'].close()
 
@@ -125,59 +125,69 @@ class ServerWorker:
     def sendRtp(self):
         """Send RTP packets over UDP (fragmenting large frames)."""
         MAX_RTP_PAYLOAD = 1500 # gửi tối đa bao nhiêu bytes
-        event = self.clientInfo.get('event') # điều khiển luồng gửi video
         video = self.clientInfo.get('videoStream') # lấy video mà client yêu cầu
         rtp_socket = self.clientInfo.get('rtpSocket') # lấy ra cái socket mà để server gửi ảnh tới client
-        if not (event and video and rtp_socket): # nếu không có thông tin của những cái này thì nó sẽ bị dừng lại
+        buffer = self.clientInfo['frameBuffer']
+        buffer_size = self.clientInfo['bufferSize']
+        event_pause = self.clientInfo['event_pause']
+        event_stop = self.clientInfo['event_stop']
+
+        if not (video and rtp_socket): # nếu không có thông tin của những cái này thì nó sẽ bị dừng lại
             print("sendRtp: missing event/video/rtp_socket")
             return
 
-        event.clear()
-
         while True:
-            # wait short time; if event set -> stop
-            was_set = event.wait(0.05)  # chờ một xíu
-            if was_set or event.is_set():
+            # TEARDOWN
+            if event_stop.is_set():
                 print("Stopping RTP transmission (TEARDOWN)")
                 break
 
-            data = video.nextFrame()  # đọc cái khung tiếp theo
+            # Nếu pause và buffer đầy thì dừng gửi
+            if event_pause.is_set() and len(buffer) >= buffer_size:
+                threading.Event().wait(0.05)
+                continue
 
-            if not data:
-                print("End of video reached. Stopping RTP stream.")
-                break  # dừng luồng, không reset
-
-            frameNumber = video.frameNbr() # lấy ra cái số thứ tự của khung
-            frame_size = len(data) # chiều dài của khung theo số nguyên, lấy ra chiều dài của khung
-            num_chunks = (frame_size + MAX_RTP_PAYLOAD - 1) // MAX_RTP_PAYLOAD # chia khung đó ra thành nhiều khung để truyền gói đó đi
-
-            # get client address (from RTSP socket info)
-            try:
-                address = self.clientInfo['rtspSocket'][1][0] # lấy cái địa chỉ của client
-                port = int(self.clientInfo.get('rtpPort', 0)) # lấy cổng rtp của client
-            except:
-                print("Connection Error")
-            # print('-'*60)
-            # traceback.print_exc(file=sys.stdout)
-            # print('-'*60)
-
-            for i in range(num_chunks):
-                start = i * MAX_RTP_PAYLOAD
-                end = min((i + 1) * MAX_RTP_PAYLOAD, frame_size)
-                payload_chunk = data[start:end] # phân mảnh dữ liệu trong video
-                marker_bit = 1 if (i == num_chunks - 1) else 0 # đánh dấu là gói cuối cùng được truyền
-
-                try:
-                    rtp_packet = self.makeRtp(payload_chunk, frameNumber, marker_bit) # nếu là 1 thì là kết thúc chuỗi, không truyền gì là 0
-                    # ensure bytes
-                    if isinstance(rtp_packet, str):
-                        rtp_packet = rtp_packet.encode('latin1') # mỗi ký tự string là 1 byte
-                    rtp_socket.sendto(rtp_packet, (address, port)) # gửi đến cái rtp của client
-                except Exception:
-                    print("Connection Error sending RTP chunk")
-                    traceback.print_exc()
-                    # break out of chunk loop on send error to avoid busy-looping
+            # Nếu buffer chưa đầy, gửi tiếp
+            if len(buffer) < buffer_size:
+                data = video.nextFrame()
+                if not data:
+                    print("End of video reached.")
                     break
+
+                frameNumber = video.frameNbr() # lấy ra cái số thứ tự của khung
+                frame_size = len(data) # chiều dài của khung theo số nguyên, lấy ra chiều dài của khung
+                num_chunks = (frame_size + MAX_RTP_PAYLOAD - 1) // MAX_RTP_PAYLOAD # chia khung đó ra thành nhiều khung để truyền gói đó đi
+
+                # get client address (from RTSP socket info)
+                try:
+                    address = self.clientInfo['rtspSocket'][1][0] # lấy cái địa chỉ của client
+                    port = int(self.clientInfo.get('rtpPort', 0)) # lấy cổng rtp của client
+                except:
+                    print("Connection Error")
+                # print('-'*60)
+                # traceback.print_exc(file=sys.stdout)
+                # print('-'*60)
+
+                for i in range(num_chunks):
+                    start = i * MAX_RTP_PAYLOAD
+                    end = min((i + 1) * MAX_RTP_PAYLOAD, frame_size)
+                    payload_chunk = data[start:end] # phân mảnh dữ liệu trong video
+                    marker_bit = 1 if (i == num_chunks - 1) else 0 # đánh dấu là gói cuối cùng được truyền
+
+                    try:
+                        rtp_packet = self.makeRtp(payload_chunk, frameNumber, marker_bit) # nếu là 1 thì là kết thúc chuỗi, không truyền gì là 0
+                        # ensure bytes
+                        if isinstance(rtp_packet, str):
+                            rtp_packet = rtp_packet.encode('latin1') # mỗi ký tự string là 1 byte
+                        rtp_socket.sendto(rtp_packet, (address, port)) # gửi đến cái rtp của client
+                    except Exception:
+                        print("Connection Error sending RTP chunk")
+                        traceback.print_exc()
+                        # break out of chunk loop on send error to avoid busy-looping
+                        break
+                buffer.append(data)  # thêm vào buffer
+            else:
+                threading.Event().wait(0.05)  # buffer đầy → đợi client
 
     def makeRtp(self, payload, frameNbr, marker=0):# mặc định marker là 0, nếu là 1 đó là gói cuối cùng của khung
         """RTP-packetize the video data."""
