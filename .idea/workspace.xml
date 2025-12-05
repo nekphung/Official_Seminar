@@ -4,10 +4,9 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="de5b726d-8b23-4806-9763-19dab680cc46" name="Changes" comment="sửa cache">
+    <list default="true" id="de5b726d-8b23-4806-9763-19dab680cc46" name="Changes" comment="cần sửa khi buffer đầy">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/Client.py" beforeDir="false" afterPath="$PROJECT_DIR$/Client.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/ServerWorker.py" beforeDir="false" afterPath="$PROJECT_DIR$/ServerWorker.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -90,7 +89,7 @@
       <workItem from="1764717842555" duration="16176000" />
       <workItem from="1764811697042" duration="18542000" />
       <workItem from="1764852153206" duration="11662000" />
-      <workItem from="1764884166210" duration="5432000" />
+      <workItem from="1764884166210" duration="9087000" />
     </task>
     <task id="LOCAL-00001" summary="Thêm mới">
       <option name="closed" value="true" />
@@ -172,7 +171,15 @@
       <option name="project" value="LOCAL" />
       <updated>1764864210095</updated>
     </task>
-    <option name="localTasksCounter" value="11" />
+    <task id="LOCAL-00011" summary="cần sửa khi buffer đầy">
+      <option name="closed" value="true" />
+      <created>1764890603679</created>
+      <option name="number" value="00011" />
+      <option name="presentableId" value="LOCAL-00011" />
+      <option name="project" value="LOCAL" />
+      <updated>1764890603679</updated>
+    </task>
+    <option name="localTasksCounter" value="12" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -184,6 +191,7 @@
     <MESSAGE value="Cập nhật client" />
     <MESSAGE value="Cập nhật" />
     <MESSAGE value="sửa cache" />
-    <option name="LAST_COMMIT_MESSAGE" value="sửa cache" />
+    <MESSAGE value="cần sửa khi buffer đầy" />
+    <option name="LAST_COMMIT_MESSAGE" value="cần sửa khi buffer đầy" />
   </component>
 </project>
