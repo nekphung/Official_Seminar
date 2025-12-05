@@ -178,6 +178,7 @@ class ServerWorker:
             # print('-'*60)
 
             for i in range(num_chunks):
+
                 start = i * MAX_RTP_PAYLOAD
                 end = min((i + 1) * MAX_RTP_PAYLOAD, frame_size)
                 payload_chunk = data[start:end] # phân mảnh dữ liệu trong video
