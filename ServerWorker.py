@@ -36,7 +36,6 @@ class ServerWorker:
             try:
                 data = connSocket.recv(256)
 
-                # Client đóng socket → thoát thread mà không crash
                 if not data:
                     print("RTSP connection closed by client.")
                     break
@@ -46,7 +45,6 @@ class ServerWorker:
 
 
                 if data_str == "STOP_STREAMING":
-                    print("Client buffer full. Pausing RTP transmission.")
                     self.clientInfo['event'].set()  # tạm dừng
                     continue  # không gọi processRtspRequest
 
@@ -90,9 +88,9 @@ class ServerWorker:
 
                 self.clientInfo['rtpPort'] = int(request[2].split('=')[1].strip())
                 self.clientInfo["rtpSocket"] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                # Khởi tạo event để điều khiển gửi frame
+
                 self.clientInfo['event'] = threading.Event()
-                self.clientInfo['event'].clear()  # ban đầu đã gửi rồi
+                self.clientInfo['event'].clear()
 
                 self.clientInfo['worker'] = threading.Thread(target=self.sendRtp, daemon=True)
                 self.clientInfo['worker'].start()
@@ -102,7 +100,7 @@ class ServerWorker:
             if self.state == self.READY:
                 print("processing PLAY\n")
                 self.state = self.PLAYING
-                self.clientInfo['event'].clear()  # bắt đầu gửi frame
+                self.clientInfo['event'].clear()
                 self.replyRtsp(self.OK_200, seq[1])
 
         # --- PAUSE ---
@@ -110,13 +108,13 @@ class ServerWorker:
             if self.state == self.PLAYING:
                 print("processing PAUSE\n")
                 self.state = self.READY
-                self.clientInfo['event'].set()  # bật công tắc, khi bấm pause thì vẫn gửi
+                self.clientInfo['event'].set()
                 self.replyRtsp(self.OK_200, seq[1])
 
         # --- TEARDOWN ---
         elif requestType == self.TEARDOWN:
             print("processing TEARDOWN\n")
-            self.clientInfo['event'].set()  # tạm dừng và dừng hoàn toàn luồng
+            self.clientInfo['event'].set()
             self.replyRtsp(self.OK_200, seq[1])
             self.clientInfo['rtpSocket'].close()
 
@@ -131,7 +129,6 @@ class ServerWorker:
             self.replyRtsp(self.OK_200, seq[1])
 
     def sendRtp(self):
-        """Send RTP packets over UDP (fragmenting large frames)."""
         MAX_RTP_PAYLOAD = 1500 # gửi tối đa bao nhiêu bytes
         event = self.clientInfo.get('event') # điều khiển luồng gửi video
         video = self.clientInfo.get('videoStream') # lấy video mà client yêu cầu
@@ -203,9 +200,9 @@ class ServerWorker:
         seqnum = frameNbr # số thứ tự của khung
         ssrc = 0 # SSRC giúp liên kết các luồng độc lập
 
-        rtpPacket = RtpPacket() # tạo ra gói tin Rtp
-        rtpPacket.encode(version, padding, extension, cc, seqnum, marker, pt, ssrc, payload) # mã hóa, đóng gói thành một gói tin hoàn chỉnh
-        return rtpPacket.getPacket() # lấy ra cái gói đó để gửi đến client
+        rtpPacket = RtpPacket()
+        rtpPacket.encode(version, padding, extension, cc, seqnum, marker, pt, ssrc, payload)
+        return rtpPacket.getPacket()
 
     def replyRtsp(self, code, seq):
         """Send RTSP reply to the client."""

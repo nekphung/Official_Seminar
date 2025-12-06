@@ -10,7 +10,6 @@ from RtpPacket import RtpPacket
 CACHE_FILE_NAME = "cache-"
 CACHE_FILE_EXT = ".jpg"
 
-
 class Client:
     INIT = 0
     READY = 1
@@ -140,8 +139,8 @@ class Client:
         self.timeLabel = Label(self.infoFrame, text="Time: 00:00")
         self.timeLabel.pack(side=LEFT, padx=5)
 
-        self.statusLabel = Label(self.infoFrame, text="Status: INIT", fg="blue")
-        self.statusLabel.pack(side=LEFT, padx=10)
+        self.networkLabel = Label(self.infoFrame, text="Net: Normal Mode", fg="blue")
+        self.networkLabel.pack(side=LEFT, padx=10)
 
         self.describe = Menubutton(self.infoFrame, text="Describe", relief=RAISED)
         self.describe.pack(side=LEFT, padx=5)
@@ -301,17 +300,8 @@ class Client:
 
             if buffer_condition or end_video:
                 self.start.config(state="normal")
-
-                if buffer_condition:
-                    # Buffer đủ, sẵn sàng phát
-                    self.statusLabel.config(text="Status: Ready to Play", fg="green")
-                elif end_video:
-                    # Server ngừng gửi nhưng vẫn còn frame → phát nốt
-                    self.statusLabel.config(text="Status: Play Remaining Frames", fg="orange")
             else:
                 self.start.config(state="disabled")
-                if len(self.frameBuffer) == 0:
-                    self.statusLabel.config(text="Status: Buffering...", fg="red")
             self.pause.config(state="disabled")
             self.teardown.config(state="normal")
 
@@ -328,7 +318,7 @@ class Client:
             # Kiểm tra network trước khi chọn HD
             if self.videoMode.get() == "hd":
                 if not self.check_network_quality():
-                    print("⚠️ Network not good enough for HD")
+                    print("Network not good enough for HD")
                     # Vẫn cho phép thử nhưng cảnh báo
 
             # Áp dụng cài đặt HD/Normal
@@ -354,20 +344,17 @@ class Client:
             pass
         self.print_statistics()
 
-
     def pauseMovie(self):
         if self.state == self.PLAYING:
             self.sendRtspRequest(self.PAUSE)
             self.stopPlayback()
             print(f"Paused at frame {self.frameNbr}, buffer size {len(self.frameBuffer)}")
-            self.statusLabel.config(text="Status: Paused", fg="orange")
 
     def playMovie(self):
         if self.state == self.READY:
             if len(self.frameBuffer) < self.MIN_BUFFER_FRAMES:
-                self.statusLabel.config(text="Status: Buffering...", fg="orange")
                 print(f"Buffer low ({len(self.frameBuffer)} frames), waiting...")
-                threading.Thread(target=self.waitForBufferThenPlay, daemon=True).start()  # chạy luồng song song
+                threading.Thread(target=self.waitForBufferThenPlay, daemon=True).start()
             else:
                 self.bufferAndPlay()
 
@@ -390,7 +377,6 @@ class Client:
             # Timeout
             if time.time() - start_time > timeout:
                 print("Buffer timeout")
-                self.master.after(0,lambda: self.statusLabel.config(text="Status: Buffer Timeout", fg="red"))
                 return
 
             time.sleep(0.1)
@@ -405,17 +391,12 @@ class Client:
                 time.sleep(0.01)  # chờ một xíu
             self.startPlayback()  # bắt đầu phát video
 
-            self.master.after(0, lambda: self.statusLabel.config(
-                text="Status: Playing", fg="green"))
-
     def startFrameReceiver(self):
         """Start receiving frames immediately"""
         if not self.isReceivingFrames and self.rtpSocket:
             self.isReceivingFrames = True
             self.endVideo = False
             self.lastFrameReceivedTime = time.time()
-            self.master.after(0, lambda: self.statusLabel.config(
-                text="Status: Receiving frames...", fg="blue"))
             print("Starting to receive frames...")
 
             self.frameReceiverThread = threading.Thread(
@@ -449,16 +430,15 @@ class Client:
                 markerBit = rtpPacket.marker()
                 payload = rtpPacket.getPayload()
 
-                self.calculate_bandwidth(len(data))  # Tính băng thông
+                self.calculate_bandwidth(len(data))
+                self.check_network_quality()
 
-                # Ghép frame theo fragmentation
                 if currFrameNbr != self.currentFrameNum:
                     self.rtpBuffer = b''
                     self.currentFrameNum = currFrameNbr
 
                 self.rtpBuffer += payload
 
-                # Nếu frame đã hoàn chỉnh
                 if markerBit == 1:
                     self.lastFrameReceivedTime = time.time()
 
@@ -470,13 +450,10 @@ class Client:
 
                         try:
                             self.rtspSocket.sendall(b"STOP_STREAMING")
-                            print("Client: Buffer full (15), sent STOP_STREAMING to server.")
                         except:
                             print("Failed to send STOP_STREAMING")
 
-                        self.sentStop = True  # không gửi lại lần nữa
-                        # KHÔNG return, vẫn chạy để không kill thread
-
+                        self.sentStop = True
                         self.master.after(0, self.updateButtons)
 
                     # Thêm frame vào buffer
@@ -533,10 +510,10 @@ class Client:
     def stopFrameReceiver(self):
         """Stop receiving frames"""
         self.isReceivingFrames = False
-        if hasattr(self, 'statusLabel'):
-            self.statusLabel.config(text="Status: Stopped")
+        print("Stop receiving frames....")
 
     # --- HỆ THỐNG PHÁT VIDEO ---
+
     def startPlayback(self):
         """Bắt đầu phát video từ buffer"""
         if self.isPlaying:
@@ -614,7 +591,6 @@ class Client:
                         self.isPlaying = False
                         self.state = self.READY
                         self.master.after(0, self.updateButtons)
-                        self.master.after(0, lambda: self.statusLabel.config(text="Status: Video Ended", fg="purple"))
                         break
                     else:
                         # doi them
@@ -796,7 +772,7 @@ class Client:
                     self.state = self.READY
                     self.updateButtons()
                     self.openRtpPort()
-                    self.startFrameReceiver()  # bắt đầu nhận khung
+                    self.startFrameReceiver()
                 elif self.requestSent == self.PLAY:
                     self.state = self.PLAYING
                     print("RTSP State: PLAYING")
