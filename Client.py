@@ -50,6 +50,7 @@ class Client:
         self.rtpBuffer = b''
         self.prevSeqNum = 0
         self.currentFrameNum = 0
+        self.sentStop = False
 
         # event to stop RTP listening loop
         self.playEvent = threading.Event()
@@ -57,7 +58,7 @@ class Client:
         self.bufferReadyEvent = threading.Event()
 
         # Thêm biến để phát hiện server ngừng gửi
-        self.serverStoppedSending = False
+        self.endVideo = False
         self.bufferFullPause = False  # buffer đầy, tạm dừng gửi chờ user Play
         self.lastFrameReceivedTime = 0
         self.frameReceiveTimeout = 2.0  # 2 giây không nhận được frame = server ngừng gửi
@@ -274,7 +275,6 @@ class Client:
             print(f"Buffer Size Used: {self.bufferSize}")
             print("=" * 50 + "\n")
 
-
     # ==================== CÁC HÀM GỐC ====================
 
     def updateTimeLabel(self):
@@ -297,15 +297,15 @@ class Client:
             self.describe.config(state="disabled")
 
             buffer_condition = len(self.frameBuffer) >= self.MIN_BUFFER_FRAMES
-            server_stopped_condition = self.serverStoppedSending and len(self.frameBuffer) > 0
+            end_video = self.endVideo and len(self.frameBuffer) > 0
 
-            if buffer_condition or server_stopped_condition:
+            if buffer_condition or end_video:
                 self.start.config(state="normal")
 
                 if buffer_condition:
                     # Buffer đủ, sẵn sàng phát
                     self.statusLabel.config(text="Status: Ready to Play", fg="green")
-                elif server_stopped_condition:
+                elif end_video:
                     # Server ngừng gửi nhưng vẫn còn frame → phát nốt
                     self.statusLabel.config(text="Status: Play Remaining Frames", fg="orange")
             else:
@@ -321,23 +321,6 @@ class Client:
             self.start.config(state="disabled")
             self.pause.config(state="normal")
             self.teardown.config(state="normal")
-
-    def checkServerStoppedSending(self):
-        """Kiểm tra xem server có ngừng gửi frame không"""
-        # Nếu client tự dừng nhận (buffer full pause) → không hiểu nhầm kết thúc video
-        if self.bufferFullPause:
-            return False
-
-        if self.isReceivingFrames and self.lastFrameReceivedTime > 0:
-            time_since_last_frame = time.time() - self.lastFrameReceivedTime
-            if time_since_last_frame > self.frameReceiveTimeout:
-                # Server đã ngừng gửi frame
-                self.serverStoppedSending = True
-                self.isReceivingFrames = False
-                print(f"Server stopped sending frames. Time since last frame: {time_since_last_frame:.1f}s")
-                self.master.after(0, self.updateButtons)
-                return True
-        return False
 
     def sendDescribe(self):
         """Gửi DESCRIBE request với kiểm tra HD"""
@@ -380,21 +363,8 @@ class Client:
             self.statusLabel.config(text="Status: Paused", fg="orange")
 
     def playMovie(self):
-        """PLAY - Xử lý cả lần đầu và resume"""
         if self.state == self.READY:
-            if self.bufferFullPause and len(self.frameBuffer) <= self.MIN_BUFFER_FRAMES + 5:
-                # buffer day -> resume receiving
-                self.bufferFullPause = False
-
-                self.startFrameReceiver()  # tiep tuc nhan frame
-
-                try:
-                    msg = "BUFFER_READY".encode('utf-8')
-                    self.rtspSocket.sendall(msg)
-                except Exception as e:
-                    print("Failed to notify server:", e)
-                return
-            elif len(self.frameBuffer) < self.MIN_BUFFER_FRAMES:
+            if len(self.frameBuffer) < self.MIN_BUFFER_FRAMES:
                 self.statusLabel.config(text="Status: Buffering...", fg="orange")
                 print(f"Buffer low ({len(self.frameBuffer)} frames), waiting...")
                 threading.Thread(target=self.waitForBufferThenPlay, daemon=True).start()  # chạy luồng song song
@@ -402,7 +372,7 @@ class Client:
                 self.bufferAndPlay()
 
     def waitForBufferThenPlay(self):
-        """Đợi buffer đủ rồi mới play hoặc resume nếu bufferFullPause."""
+        """Đợi đủ buffer rồi mới play, không còn bufferFullPause."""
         timeout = 15
         start_time = time.time()
 
@@ -410,24 +380,17 @@ class Client:
             buffer_ready = len(self.frameBuffer) >= self.MIN_BUFFER_FRAMES
             server_has_frames = len(self.frameBuffer) > 0
 
-            if buffer_ready or (self.serverStoppedSending and server_has_frames):
-                # Reset bufferFullPause nếu có
-                if self.bufferFullPause:
-                    self.bufferFullPause = False
-                    try:
-                        msg = "BUFFER_READY".encode('utf-8')
-                        self.rtspSocket.sendall(msg)
-                    except Exception as e:
-                        print("Failed to notify server:", e)
-                    self.startFrameReceiver()
-
+            # Khi buffer đủ, hoặc hết video nhưng vẫn còn frame
+            if buffer_ready or (self.endVideo and server_has_frames):
+                print("Buffer ready, starting play...")
+                self.startFrameReceiver()
                 self.master.after(0, self.bufferAndPlay)
                 return
 
+            # Timeout
             if time.time() - start_time > timeout:
-                self.master.after(0, lambda: self.statusLabel.config(
-                    text="Status: Buffer Timeout", fg="red"))
                 print("Buffer timeout")
+                self.master.after(0,lambda: self.statusLabel.config(text="Status: Buffer Timeout", fg="red"))
                 return
 
             time.sleep(0.1)
@@ -449,7 +412,7 @@ class Client:
         """Start receiving frames immediately"""
         if not self.isReceivingFrames and self.rtpSocket:
             self.isReceivingFrames = True
-            self.serverStoppedSending = False
+            self.endVideo = False
             self.lastFrameReceivedTime = time.time()
             self.master.after(0, lambda: self.statusLabel.config(
                 text="Status: Receiving frames...", fg="blue"))
@@ -475,7 +438,7 @@ class Client:
 
                 # Kiểm tra END_OF_VIDEO
                 if data == b"END_OF_VIDEO":
-                    self.serverStoppedSending = True
+                    self.endVideo = True
                     self.isReceivingFrames = False
                     self.master.after(0, self.updateButtons)
                     break
@@ -486,9 +449,7 @@ class Client:
                 markerBit = rtpPacket.marker()
                 payload = rtpPacket.getPayload()
 
-
                 self.calculate_bandwidth(len(data))  # Tính băng thông
-
 
                 # Ghép frame theo fragmentation
                 if currFrameNbr != self.currentFrameNum:
@@ -503,6 +464,21 @@ class Client:
 
                     self.analyze_frame_loss(currFrameNbr)
 
+                    if (len(self.frameBuffer) >= self.MIN_BUFFER_FRAMES
+                            and not self.sentStop
+                            and self.state == self.READY):
+
+                        try:
+                            self.rtspSocket.sendall(b"STOP_STREAMING")
+                            print("Client: Buffer full (15), sent STOP_STREAMING to server.")
+                        except:
+                            print("Failed to send STOP_STREAMING")
+
+                        self.sentStop = True  # không gửi lại lần nữa
+                        # KHÔNG return, vẫn chạy để không kill thread
+
+                        self.master.after(0, self.updateButtons)
+
                     # Thêm frame vào buffer
                     if len(self.frameBuffer) < self.bufferSize:
                         self.frameBuffer.append((currFrameNbr, self.rtpBuffer))
@@ -512,19 +488,7 @@ class Client:
 
                         if self.state == self.READY and len(self.frameBuffer) >= self.MIN_BUFFER_FRAMES:
                             self.master.after(0, self.updateButtons)
-                    else:
-                        # Buffer full
-                        if not self.bufferFullPause:  # không đầy
-                            self.bufferFullPause = True
-                            self.isReceivingFrames = False  # tạm dừng nhận
-                           # print("Buffer full. Notifying server to pause sending...")
-                            self.master.after(0, lambda: self.statusLabel.config(
-                                text="Status: Buffer Full", fg="orange"))
-                            try:
-                                msg = "BUFFER_FULL".encode('utf-8')
-                                self.rtspSocket.sendall(msg)
-                            except Exception as e:
-                                print("Failed to notify server:", e)
+
 
                     # Cập nhật thống kê
                     self.performance_stats['frames_received'] += 1
@@ -533,14 +497,6 @@ class Client:
                     self.rtpBuffer = b''
 
             except socket.timeout:
-                # Nếu buffer full đang pause → KHÔNG kiểm tra server
-                if self.bufferFullPause:
-                    # print("Buffer full -> stopping frame receiver thread")
-                    self.isReceivingFrames = False
-                    return
-
-                if not self.serverStoppedSending:
-                    self.checkServerStoppedSending()
                 continue
             except Exception as e:
                 if self.isReceivingFrames:
@@ -616,24 +572,6 @@ class Client:
 
         while self.isPlaying and not self.playEvent.is_set():
             currentTime = time.time()
-            current_buffer = len(self.frameBuffer)
-
-            # ---- BUFFER CONTROL ----
-            if not self.bufferFullPause and current_buffer >= self.bufferSize:
-                print("Buffer reached MAX → sending BUFFER_FULL to server")
-                self.bufferFullPause = True
-                try:
-                    self.rtspSocket.sendall("BUFFER_FULL".encode())
-                except:
-                    pass
-
-            if self.bufferFullPause and current_buffer <= self.bufferSize - 10:
-                print("Buffer dropped → sending BUFFER_READY to server")
-                self.bufferFullPause = False
-                try:
-                    self.rtspSocket.sendall("BUFFER_READY".encode())
-                except:
-                    pass
 
             # Điều chỉnh tốc độ
             if currentTime - last_speed_adjustment > 0.5:
@@ -671,7 +609,7 @@ class Client:
 
                 else:
                     # Buffer rỗng
-                    if self.serverStoppedSending:
+                    if self.endVideo:
                         print("Video ended - No more frames in buffer")
                         self.isPlaying = False
                         self.state = self.READY
@@ -854,8 +792,8 @@ class Client:
 
             if status_code == 200:
                 if self.requestSent == self.SETUP:
-                    self.state = self.READY
                     print("RTSP State: READY")
+                    self.state = self.READY
                     self.updateButtons()
                     self.openRtpPort()
                     self.startFrameReceiver()  # bắt đầu nhận khung

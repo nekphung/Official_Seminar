@@ -44,13 +44,10 @@ class ServerWorker:
                 data_str = data.decode("utf-8").strip()
                 print("Data received:\n" + data_str)
 
-                if data_str in ["BUFFER_FULL", "BUFFER_READY"]:
-                    if data_str == "BUFFER_FULL":
-                        print("Client buffer full. Pausing RTP transmission.")
-                        self.clientInfo['event'].set()  # tạm dừng
-                    else:
-                        print("Client buffer ready. Resuming RTP transmission.")
-                        self.clientInfo['event'].clear()  # tiếp tục, luồng gửi
+
+                if data_str == "STOP_STREAMING":
+                    print("Client buffer full. Pausing RTP transmission.")
+                    self.clientInfo['event'].set()  # tạm dừng
                     continue  # không gọi processRtspRequest
 
                 # Nếu không phải thông điệp buffer, xử lý như RTSP request bình thường
@@ -100,8 +97,6 @@ class ServerWorker:
                 self.clientInfo['worker'] = threading.Thread(target=self.sendRtp, daemon=True)
                 self.clientInfo['worker'].start()
 
-                self.clientInfo['teardown'] = False
-
         # --- PLAY ---
         elif requestType == self.PLAY:
             if self.state == self.READY:
@@ -115,30 +110,15 @@ class ServerWorker:
             if self.state == self.PLAYING:
                 print("processing PAUSE\n")
                 self.state = self.READY
-                # self.clientInfo['event'].set()  # bật công tắc, khi bấm pause thì vẫn gửi
+                self.clientInfo['event'].set()  # bật công tắc, khi bấm pause thì vẫn gửi
                 self.replyRtsp(self.OK_200, seq[1])
 
+        # --- TEARDOWN ---
         elif requestType == self.TEARDOWN:
             print("processing TEARDOWN\n")
-
-            # đặt flag teardown
-            self.clientInfo['teardown'] = True
-
-            # dừng event để cho sendRtp thoát
-            if 'event' in self.clientInfo:
-                self.clientInfo['event'].set()
-
+            self.clientInfo['event'].set()  # tạm dừng và dừng hoàn toàn luồng
             self.replyRtsp(self.OK_200, seq[1])
-
-            # đóng socket
-            try:
-                if self.clientInfo.get('rtpSocket'):
-                    self.clientInfo['rtpSocket'].close()
-            except Exception as e:
-                print("Error closing RTP socket:", e)
-            finally:
-                self.clientInfo['rtpSocket'] = None
-
+            self.clientInfo['rtpSocket'].close()
 
 
         elif requestType == self.DESCRIBE:
@@ -152,87 +132,66 @@ class ServerWorker:
 
     def sendRtp(self):
         """Send RTP packets over UDP (fragmenting large frames)."""
-        MAX_RTP_PAYLOAD = 1500
-        event = self.clientInfo.get('event')
-        video = self.clientInfo.get('videoStream')
+        MAX_RTP_PAYLOAD = 1500 # gửi tối đa bao nhiêu bytes
+        event = self.clientInfo.get('event') # điều khiển luồng gửi video
+        video = self.clientInfo.get('videoStream') # lấy video mà client yêu cầu
+        rtp_socket = self.clientInfo.get('rtpSocket') # lấy ra cái socket mà để server gửi ảnh tới client
+        if not (event and video and rtp_socket): # nếu không có thông tin của những cái này thì nó sẽ bị dừng lại
+            print("sendRtp: missing event/video/rtp_socket")
+            return
 
         while True:
-            # 1. Ưu tiên xử lý TEARDOWN trước
-            if self.clientInfo.get('teardown', False):
-                print("sendRtp stopped: TEARDOWN received.")
-                return
+            # wait short time; if event set -> stop
+            was_set = event.wait(0.05)  # chờ một xíu
+            if was_set or event.is_set():
+                continue  # không break, quay lại vòng lặp chờ Play
 
-            # 2. Check socket/video/event
-            rtp_socket = self.clientInfo.get('rtpSocket')
-            if not rtp_socket:
-                print("sendRtp stopped: rtpSocket is None.")
-                return
+            data = video.nextFrame()  # đọc cái khung tiếp theo
 
-            if not (event and video):
-                print("sendRtp stopped: missing event or video.")
-                return
-
-            # chờ PAUSE / BUFFER_FULL
-            if event.wait(0.05) or event.is_set():
-                continue  # vẫn giữ vòng lặp, chờ PLAY
-
-            data = video.nextFrame()
             if not data:
                 print("End of video reached. Stopping RTP stream.")
                 try:
-                    if rtp_socket:
-                        address = self.clientInfo['rtspSocket'][1][0]
-                        port = int(self.clientInfo.get('rtpPort', 0))
-                        rtp_socket.sendto(b"END_OF_VIDEO", (address, port))
+                    # gửi thông điệp tới client qua RTP socket
+                    end_message = b"END_OF_VIDEO"
+                    address = self.clientInfo['rtspSocket'][1][0]
+                    port = int(self.clientInfo.get('rtpPort', 0))
+                    rtp_socket.sendto(end_message, (address, port))
                 except Exception as e:
                     print("Error sending END_OF_VIDEO:", e)
-                break
+                break  # dừng luồng, không reset
 
-            frameNumber = video.frameNbr()
-            frame_size = len(data)
-            num_chunks = (frame_size + MAX_RTP_PAYLOAD - 1) // MAX_RTP_PAYLOAD
+            frameNumber = video.frameNbr() # lấy ra cái số thứ tự của khung
+            frame_size = len(data) # chiều dài của khung theo số nguyên, lấy ra chiều dài của khung
+            num_chunks = (frame_size + MAX_RTP_PAYLOAD - 1) // MAX_RTP_PAYLOAD # chia khung đó ra thành nhiều khung để truyền gói đó đi
 
+            # get client address (from RTSP socket info)
             try:
-                address = self.clientInfo['rtspSocket'][1][0]
-                port = int(self.clientInfo.get('rtpPort', 0))
-            except Exception:
-                print("Connection Error getting client address/port")
-                break
+                address = self.clientInfo['rtspSocket'][1][0] # lấy cái địa chỉ của client
+                port = int(self.clientInfo.get('rtpPort', 0)) # lấy cổng rtp của client
+            except:
+                print("Connection Error")
+            # print('-'*60)
+            # traceback.print_exc(file=sys.stdout)
+            # print('-'*60)
 
-            # gửi từng chunk
             for i in range(num_chunks):
-                # TEARDOWN giữa chừng
-                if self.clientInfo.get('teardown', False):
-                    print("sendRtp stopped mid-frame due to TEARDOWN.")
-                    return
-
-                rtp_socket = self.clientInfo.get('rtpSocket')
-                if not rtp_socket:
-                    print("RTP socket closed, stopping sendRtp.")
-                    return
 
                 start = i * MAX_RTP_PAYLOAD
                 end = min((i + 1) * MAX_RTP_PAYLOAD, frame_size)
-                payload_chunk = data[start:end]
-                marker_bit = 1 if i == num_chunks - 1 else 0
+                payload_chunk = data[start:end] # phân mảnh dữ liệu trong video
+                marker_bit = 1 if (i == num_chunks - 1) else 0 # đánh dấu là gói cuối cùng được truyền
 
                 try:
-                    rtp_packet = self.makeRtp(payload_chunk, frameNumber, marker_bit)
+                    rtp_packet = self.makeRtp(payload_chunk, frameNumber, marker_bit) # nếu là 1 thì là kết thúc chuỗi, không truyền gì là 0
+                    # ensure bytes
                     if isinstance(rtp_packet, str):
-                        rtp_packet = rtp_packet.encode('latin1')
-                    rtp_socket.sendto(rtp_packet, (address, port))
-                except OSError as e:
-                    # WinError 10038 hoặc lỗi socket khác
-                    print("Connection Error sending RTP chunk:", e)
-                    return
+                        rtp_packet = rtp_packet.encode('latin1') # mỗi ký tự string là 1 byte
+                    rtp_socket.sendto(rtp_packet, (address, port)) # gửi đến cái rtp của client
                 except Exception:
-                    print("Unexpected error sending RTP chunk")
+                    print("Connection Error sending RTP chunk")
                     traceback.print_exc()
-                    return
-
-            # kiểm tra PAUSE / TEARDOWN sau khi gửi frame xong
-            if event.is_set():
-                print("Paused or socket closed after sending current frame.")
+                    # break out of chunk loop on send error to avoid busy-looping
+                    break
 
     def makeRtp(self, payload, frameNbr, marker=0):# mặc định marker là 0, nếu là 1 đó là gói cuối cùng của khung
         """RTP-packetize the video data."""
