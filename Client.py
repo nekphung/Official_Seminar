@@ -172,8 +172,6 @@ class Client:
         if self.prevSeqNum != 0 and seq_num > self.prevSeqNum + 1:
             lost_frames = seq_num - self.prevSeqNum - 1
             self.total_lost_frames += lost_frames
-            print(f"Lost {lost_frames} frame(s): {self.prevSeqNum + 1} -> {seq_num}")
-
         self.prevSeqNum = seq_num
 
     def calculate_bandwidth(self, packet_size):
@@ -477,11 +475,9 @@ class Client:
 
                 # Kiểm tra END_OF_VIDEO
                 if data == b"END_OF_VIDEO":
-                    print("Received END_OF_VIDEO from server")
                     self.serverStoppedSending = True
                     self.isReceivingFrames = False
                     self.master.after(0, self.updateButtons)
-                    self.master.after(0, lambda: self.statusLabel.config(text="Status: Video Ended", fg="purple"))
                     break
 
                 rtpPacket = RtpPacket()
@@ -506,6 +502,7 @@ class Client:
                     self.lastFrameReceivedTime = time.time()
 
                     self.analyze_frame_loss(currFrameNbr)
+
                     # Thêm frame vào buffer
                     if len(self.frameBuffer) < self.bufferSize:
                         self.frameBuffer.append((currFrameNbr, self.rtpBuffer))
@@ -520,7 +517,7 @@ class Client:
                         if not self.bufferFullPause:  # không đầy
                             self.bufferFullPause = True
                             self.isReceivingFrames = False  # tạm dừng nhận
-                            print("Buffer full. Notifying server to pause sending...")
+                           # print("Buffer full. Notifying server to pause sending...")
                             self.master.after(0, lambda: self.statusLabel.config(
                                 text="Status: Buffer Full", fg="orange"))
                             try:
@@ -538,9 +535,9 @@ class Client:
             except socket.timeout:
                 # Nếu buffer full đang pause → KHÔNG kiểm tra server
                 if self.bufferFullPause:
-                    print("Buffer full -> stopping frame receiver thread")
+                    # print("Buffer full -> stopping frame receiver thread")
                     self.isReceivingFrames = False
-                    return  # <<< QUAN TRỌNG NHẤT
+                    return
 
                 if not self.serverStoppedSending:
                     self.checkServerStoppedSending()
@@ -550,7 +547,6 @@ class Client:
                     print(f"Error receiving frame: {e}")
                 break
 
-        print("Stopped receiving frames")
         # Cập nhật nút Play khi server ngừng gửi nhưng vẫn còn frame trong buffer
         if self.state == self.READY and len(self.frameBuffer) > 0:
             self.master.after(0, self.updateButtons)
@@ -617,8 +613,6 @@ class Client:
         """Phát video từ buffer"""
         frames_displayed = 0
         last_speed_adjustment = time.time()
-
-        print("Starting playback...")
 
         while self.isPlaying and not self.playEvent.is_set():
             currentTime = time.time()

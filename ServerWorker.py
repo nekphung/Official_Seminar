@@ -100,6 +100,8 @@ class ServerWorker:
                 self.clientInfo['worker'] = threading.Thread(target=self.sendRtp, daemon=True)
                 self.clientInfo['worker'].start()
 
+                self.clientInfo['teardown'] = False
+
         # --- PLAY ---
         elif requestType == self.PLAY:
             if self.state == self.READY:
@@ -116,12 +118,19 @@ class ServerWorker:
                 # self.clientInfo['event'].set()  # bật công tắc, khi bấm pause thì vẫn gửi
                 self.replyRtsp(self.OK_200, seq[1])
 
-        # --- TEARDOWN ---
         elif requestType == self.TEARDOWN:
             print("processing TEARDOWN\n")
-            self.clientInfo['event'].set()  # tạm dừng và dừng hoàn toàn luồng
+
+            # đặt flag teardown
+            self.clientInfo['teardown'] = True
+
+            # dừng event để cho sendRtp thoát
+            if 'event' in self.clientInfo:
+                self.clientInfo['event'].set()
+
             self.replyRtsp(self.OK_200, seq[1])
-            # Đóng socket và xóa reference
+
+            # đóng socket
             try:
                 if self.clientInfo.get('rtpSocket'):
                     self.clientInfo['rtpSocket'].close()
@@ -129,6 +138,7 @@ class ServerWorker:
                 print("Error closing RTP socket:", e)
             finally:
                 self.clientInfo['rtpSocket'] = None
+
 
 
         elif requestType == self.DESCRIBE:
@@ -147,10 +157,20 @@ class ServerWorker:
         video = self.clientInfo.get('videoStream')
 
         while True:
-            rtp_socket = self.clientInfo.get('rtpSocket')  # lấy socket mỗi vòng
+            # 1. Ưu tiên xử lý TEARDOWN trước
+            if self.clientInfo.get('teardown', False):
+                print("sendRtp stopped: TEARDOWN received.")
+                return
+
+            # 2. Check socket/video/event
+            rtp_socket = self.clientInfo.get('rtpSocket')
+            if not rtp_socket:
+                print("sendRtp stopped: rtpSocket is None.")
+                return
+
             if not (event and video):
-                print("sendRtp: missing event/video, stopping thread.")
-                break
+                print("sendRtp stopped: missing event or video.")
+                return
 
             # chờ PAUSE / BUFFER_FULL
             if event.wait(0.05) or event.is_set():
@@ -181,15 +201,20 @@ class ServerWorker:
 
             # gửi từng chunk
             for i in range(num_chunks):
-                start = i * MAX_RTP_PAYLOAD
-                end = min((i + 1) * MAX_RTP_PAYLOAD, frame_size)
-                payload_chunk = data[start:end]
-                marker_bit = 1 if i == num_chunks - 1 else 0
+                # TEARDOWN giữa chừng
+                if self.clientInfo.get('teardown', False):
+                    print("sendRtp stopped mid-frame due to TEARDOWN.")
+                    return
 
                 rtp_socket = self.clientInfo.get('rtpSocket')
                 if not rtp_socket:
                     print("RTP socket closed, stopping sendRtp.")
                     return
+
+                start = i * MAX_RTP_PAYLOAD
+                end = min((i + 1) * MAX_RTP_PAYLOAD, frame_size)
+                payload_chunk = data[start:end]
+                marker_bit = 1 if i == num_chunks - 1 else 0
 
                 try:
                     rtp_packet = self.makeRtp(payload_chunk, frameNumber, marker_bit)
@@ -206,9 +231,8 @@ class ServerWorker:
                     return
 
             # kiểm tra PAUSE / TEARDOWN sau khi gửi frame xong
-            if event.is_set() or self.clientInfo.get('rtpSocket') is None:
+            if event.is_set():
                 print("Paused or socket closed after sending current frame.")
-                return
 
     def makeRtp(self, payload, frameNbr, marker=0):# mặc định marker là 0, nếu là 1 đó là gói cuối cùng của khung
         """RTP-packetize the video data."""
