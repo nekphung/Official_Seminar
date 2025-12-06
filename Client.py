@@ -23,7 +23,6 @@ class Client:
 
     # Cấu hình buffer
     MIN_BUFFER_FRAMES = 10
-    TARGET_BUFFER_FRAMES = 24
     MAX_BUFFER_FRAMES = 120
 
     def __init__(self, master, serveraddr, serverport, rtpport, filename):
@@ -83,39 +82,7 @@ class Client:
         self.cache_lock = threading.Lock()
         self.connectToServer()
 
-    def setup_buffer_system(self):
-        """Thiết lập hệ thống buffer"""
-        # Buffer cho frames
-        self.frameBuffer = deque()
-        self.bufferSize = self.MAX_BUFFER_FRAMES
-
-        # Control flags
-        self.isReceivingFrames = False
-        self.isPlaying = False
-        self.frameReceiverThread = None
-        self.playbackThread = None
-
-        # Performance tracking
-        self.performance_stats = {
-            'frames_received': 0,
-            'start_time': time.time(),
-            'last_frame_time': 0
-        }
-
-        # Frame timing
-        self.baseFrameInterval = 0.042  # 24 fps
-        self.currentFrameInterval = self.baseFrameInterval
-        self.lastDisplayTime = 0
-        self.frameDropCount = 0
-
-        # Playback timing
-        self.currentPlaybackTime = 0
-        self.startTime = 0
-        self.pausedTime = 0
-        self.lastBufferAdjustTime = time.time()
-
-        # Buffer monitoring
-        self.bufferHistory = deque(maxlen=10)
+    # Các hàm bổ trợ, cập nhật GUI
 
     def createWidgets(self):
         # --- Video Frame ---
@@ -164,11 +131,68 @@ class Client:
         self.teardown = Button(self.controlFrame, width=15, text="Teardown", command=self.exitClient)
         self.teardown.pack(side=LEFT, padx=5)
 
-    # ==================== CÁC HÀM HD STREAMING ====================
+    def updateTimeLabel(self):
+        """Convert total seconds to MM:SS format and update timeLabel."""
+        minutes = int(self.currentPlaybackTime // 60)
+        seconds = int(self.currentPlaybackTime % 60)
+        time_str = f"Time: {minutes:02d}:{seconds:02d}"
+        self.timeLabel.config(text=time_str)
+
+    def updateButtons(self):
+        if self.state == self.INIT:
+            self.setup.config(state="normal")
+            self.describe.config(state="normal")
+            self.start.config(state="disabled")
+            self.pause.config(state="disabled")
+            self.teardown.config(state="disabled")
+
+        elif self.state == self.READY:
+            self.setup.config(state="disabled")
+            self.describe.config(state="disabled")
+
+            buffer_condition = len(self.frameBuffer) >= self.MIN_BUFFER_FRAMES
+            end_video = self.endVideo and len(self.frameBuffer) > 0
+
+            if buffer_condition or end_video:
+                self.start.config(state="normal")
+            else:
+                self.start.config(state="disabled")
+            self.pause.config(state="disabled")
+            self.teardown.config(state="normal")
+
+        elif self.state == self.PLAYING:
+            self.setup.config(state="disabled")
+            self.describe.config(state="disabled")
+            self.start.config(state="disabled")
+            self.pause.config(state="normal")
+            self.teardown.config(state="normal")
+
+    def updateBufferLabel(self):
+        """Cập nhật Buffer Label"""
+        current_length = len(self.frameBuffer)
+        buffer_ratio = current_length / self.bufferSize
+
+        fps = 1 / self.currentFrameInterval if self.currentFrameInterval > 0 else 0
+        text_content = f"Buffer: {current_length:03d}/{self.bufferSize} ({fps:.1f} fps)"
+
+        # Xác định màu đơn giản
+        if buffer_ratio < 0.2:
+            color = "red"
+        elif buffer_ratio < 0.5:
+            color = "orange"
+        elif buffer_ratio < 0.8:
+            color = "blue"
+        else:
+            color = "green"
+
+        # Cập nhật GUI
+        self.master.after(0, lambda: self.bufferLabel.config(
+            text=text_content, fg=color))
+
+    # Yêu Cầu 2: HD Video Streaming
 
     def analyze_frame_loss(self, seq_num):
         """Phân tích mất gói - đơn giản"""
-        lost_frames = 0
         if self.prevSeqNum != 0 and seq_num > self.prevSeqNum + 1:
             lost_frames = seq_num - self.prevSeqNum - 1
             self.total_lost_frames += lost_frames
@@ -187,15 +211,15 @@ class Client:
             elapsed = current_time - self.bandwidth_stats['last_check']
             if elapsed > 0:
                 bytes_per_sec = self.bandwidth_stats['total_bytes'] / elapsed
-                kbps = (bytes_per_sec * 8) / 1000  # chuyển sang kbps
+                kbps = (bytes_per_sec * 8) / 1000
 
                 # Update bandwidth label
                 if hasattr(self, 'bandwidthLabel'):
                     self.bandwidthLabel.config(text=f"BW: {kbps:.0f} kbps")
 
-                    if kbps < 1000:  # Dưới 1 Mbps
+                    if kbps < 1000:
                         self.bandwidthLabel.config(fg="red")
-                    elif kbps < 2000:  # Dưới 2 Mbps
+                    elif kbps < 2000:
                         self.bandwidthLabel.config(fg="orange")
                     else:
                         self.bandwidthLabel.config(fg="green")
@@ -207,15 +231,12 @@ class Client:
     def adjust_for_hd(self):
         """Điều chỉnh cài đặt cho video HD"""
         if self.videoMode.get() == "hd":
-            # Tăng buffer cho HD
             self.bufferSize = self.hd_buffer_size
             self.MIN_BUFFER_FRAMES = self.hd_min_buffer
 
-            # Giảm timeout cho latency thấp
             self.frameReceiveTimeout = 1.5
 
-            # Điều chỉnh tốc độ phát cho HD
-            self.baseFrameInterval = 0.033  # ~30fps cho HD
+            self.baseFrameInterval = 0.033
 
             # Update network label
             if hasattr(self, 'networkLabel'):
@@ -256,10 +277,9 @@ class Client:
         elapsed_time = time.time() - self.bandwidth_stats['start_time']
 
         if elapsed_time > 0 and self.total_frames_received > 0:
-            # Tính loss rate
+
             loss_rate = (self.total_lost_frames / self.total_frames_received) * 100
 
-            # Tính bandwidth trung bình
             avg_kbps = (self.bandwidth_stats['total_bytes'] * 8) / (elapsed_time * 1000)
 
             print("\n" + "=" * 50)
@@ -274,89 +294,34 @@ class Client:
             print(f"Buffer Size Used: {self.bufferSize}")
             print("=" * 50 + "\n")
 
-    # ==================== CÁC HÀM GỐC ====================
+    # Yêu Cầu 3: Client-Side Caching
 
-    def updateTimeLabel(self):
-        """Convert total seconds to MM:SS format and update timeLabel."""
-        minutes = int(self.currentPlaybackTime // 60)
-        seconds = int(self.currentPlaybackTime % 60)
-        time_str = f"Time: {minutes:02d}:{seconds:02d}"
-        self.timeLabel.config(text=time_str)
+    def setup_buffer_system(self):
+        """Thiết lập hệ thống buffer"""
+        # Buffer cho frames
+        self.frameBuffer = deque()
+        self.bufferSize = self.MAX_BUFFER_FRAMES
 
-    def updateButtons(self):
-        if self.state == self.INIT:
-            self.setup.config(state="normal")
-            self.describe.config(state="normal")
-            self.start.config(state="disabled")
-            self.pause.config(state="disabled")
-            self.teardown.config(state="disabled")
+        # Control flags
+        self.isReceivingFrames = False
+        self.isPlaying = False
+        self.frameReceiverThread = None
+        self.playbackThread = None
 
-        elif self.state == self.READY:
-            self.setup.config(state="disabled")
-            self.describe.config(state="disabled")
+        # Frame timing
+        self.baseFrameInterval = 0.042  # 24 fps
+        self.currentFrameInterval = self.baseFrameInterval
+        self.lastDisplayTime = 0
+        self.frameDropCount = 0
 
-            buffer_condition = len(self.frameBuffer) >= self.MIN_BUFFER_FRAMES
-            end_video = self.endVideo and len(self.frameBuffer) > 0
+        # Playback timing
+        self.currentPlaybackTime = 0
+        self.startTime = 0
+        self.pausedTime = 0
+        self.lastBufferAdjustTime = time.time()
 
-            if buffer_condition or end_video:
-                self.start.config(state="normal")
-            else:
-                self.start.config(state="disabled")
-            self.pause.config(state="disabled")
-            self.teardown.config(state="normal")
-
-        elif self.state == self.PLAYING:
-            self.setup.config(state="disabled")
-            self.describe.config(state="disabled")
-            self.start.config(state="disabled")
-            self.pause.config(state="normal")
-            self.teardown.config(state="normal")
-
-    def sendDescribe(self):
-        """Gửi DESCRIBE request với kiểm tra HD"""
-        if self.state == self.INIT:
-            # Kiểm tra network trước khi chọn HD
-            if self.videoMode.get() == "hd":
-                if not self.check_network_quality():
-                    print("Network not good enough for HD")
-                    # Vẫn cho phép thử nhưng cảnh báo
-
-            # Áp dụng cài đặt HD/Normal
-            self.adjust_for_hd()
-
-            self.sendRtspRequest(self.DESCRIBE)
-
-    def setupMovie(self):
-        if self.state == self.INIT:
-            self.sendRtspRequest(self.SETUP)
-
-    def exitClient(self):
-        """Clean up when exiting"""
-        self.stopFrameReceiver()
-        self.stopPlayback()
-        if self.state != self.INIT:
-            self.sendRtspRequest(self.TEARDOWN)
-        self.playEvent.set()
-
-        try:
-            self.master.destroy()
-        except:
-            pass
-        self.print_statistics()
-
-    def pauseMovie(self):
-        if self.state == self.PLAYING:
-            self.sendRtspRequest(self.PAUSE)
-            self.stopPlayback()
-            print(f"Paused at frame {self.frameNbr}, buffer size {len(self.frameBuffer)}")
-
-    def playMovie(self):
-        if self.state == self.READY:
-            if len(self.frameBuffer) < self.MIN_BUFFER_FRAMES:
-                print(f"Buffer low ({len(self.frameBuffer)} frames), waiting...")
-                threading.Thread(target=self.waitForBufferThenPlay, daemon=True).start()
-            else:
-                self.bufferAndPlay()
+        # Buffer monitoring
+        self.bufferHistory = deque(maxlen=10)
 
     def waitForBufferThenPlay(self):
         """Đợi đủ buffer rồi mới play, không còn bufferFullPause."""
@@ -367,16 +332,13 @@ class Client:
             buffer_ready = len(self.frameBuffer) >= self.MIN_BUFFER_FRAMES
             server_has_frames = len(self.frameBuffer) > 0
 
-            # Khi buffer đủ, hoặc hết video nhưng vẫn còn frame
             if buffer_ready or (self.endVideo and server_has_frames):
-                print("Buffer ready, starting play...")
                 self.startFrameReceiver()
                 self.master.after(0, self.bufferAndPlay)
                 return
 
             # Timeout
             if time.time() - start_time > timeout:
-                print("Buffer timeout")
                 return
 
             time.sleep(0.1)
@@ -384,12 +346,10 @@ class Client:
     def bufferAndPlay(self):
         """Bắt đầu phát video từ buffer"""
         if self.state == self.READY:
-            print(f"Starting playback with {len(self.frameBuffer)} frames in buffer")
-
             self.sendRtspRequest(self.PLAY)
             while self.state != self.PLAYING:
-                time.sleep(0.01)  # chờ một xíu
-            self.startPlayback()  # bắt đầu phát video
+                time.sleep(0.01)
+            self.startPlayback()
 
     def startFrameReceiver(self):
         """Start receiving frames immediately"""
@@ -397,7 +357,6 @@ class Client:
             self.isReceivingFrames = True
             self.endVideo = False
             self.lastFrameReceivedTime = time.time()
-            print("Starting to receive frames...")
 
             self.frameReceiverThread = threading.Thread(
                 target=self.listenRtp,
@@ -405,10 +364,120 @@ class Client:
             )
             self.frameReceiverThread.start()
 
+    def adjustPlaybackSpeed(self):
+        """Điều chỉnh tốc độ phát dựa trên buffer hiện tại và lịch sử"""
+        current_buffer = len(self.frameBuffer)
+        self.bufferHistory.append(current_buffer)
+
+        avg_buffer = sum(self.bufferHistory) / len(self.bufferHistory)
+
+        buffer_ratio = avg_buffer / self.bufferSize
+
+        max_interval = 0.08
+        self.currentFrameInterval = max_interval - (max_interval - self.baseFrameInterval) * buffer_ratio
+
+        if self.videoMode.get() == "hd":
+            self.currentFrameInterval = max(self.currentFrameInterval, 0.035)
+
+    def stopFrameReceiver(self):
+        """Stop receiving frames"""
+        self.isReceivingFrames = False
+
+    def startPlayback(self):
+        """Bắt đầu phát video từ buffer"""
+        if self.isPlaying:
+            return
+
+        self.isPlaying = True
+        self.playEvent.clear()
+
+        self.startTime = time.time() - self.pausedTime
+
+        self.playbackThread = threading.Thread(
+            target=self.playFromBuffer,
+            daemon=True
+        )
+        self.playbackThread.start()
+
+    def stopPlayback(self):
+        """Dừng phát video"""
+        if not self.isPlaying:
+            return
+
+        self.isPlaying = False
+        self.playEvent.set()
+        self.pausedTime = self.currentPlaybackTime
+
+    def playFromBuffer(self):
+        """Phát video từ buffer"""
+        last_speed_adjustment = time.time()
+
+        while self.isPlaying and not self.playEvent.is_set():
+            currentTime = time.time()
+
+            # Điều chỉnh tốc độ
+            if currentTime - last_speed_adjustment > 0.5:
+                self.adjustPlaybackSpeed()
+                last_speed_adjustment = currentTime
+
+            elapsed = currentTime - self.lastDisplayTime
+
+            if elapsed >= self.currentFrameInterval:
+                if self.frameBuffer:
+                    # Lấy frame từ buffer
+                    frameNbr, frame_data = self.frameBuffer.popleft()
+                    if self.frameNbr is not None and frameNbr != self.frameNbr + 1:
+                        print(f"Lost frame(s) detected: expected {self.frameNbr + 1}, got {frameNbr}")
+
+                    self.updateBufferLabel()
+
+                    # Ghi frame ra file tạm
+                    cachename = self.writeFrame(frame_data)
+
+                    # Cập nhật GUI
+                    try:
+                        self.updateMovie(cachename)
+                    except Exception as e:
+                        print("Failed to update frame:", e)
+
+                    self.frameNbr = frameNbr
+                    print("Current Seq Num: ", self.frameNbr)
+
+                    # Cập nhật thời gian phát
+                    self.currentPlaybackTime = currentTime - self.startTime
+                    self.updateTimeLabel()
+
+                    self.lastDisplayTime = currentTime
+
+                else:
+                    # Buffer rỗng
+                    if self.endVideo:
+                        self.isPlaying = False
+                        self.state = self.READY
+                        self.master.after(0, self.updateButtons)
+                        break
+                    else:
+                        time.sleep(0.1)
+            else:
+                sleep_time = max(0.001, (self.currentFrameInterval - elapsed) / 2)
+                time.sleep(sleep_time)
+
+    # Yêu Cầu 1: Implement the RTSP protocol in the client and implement
+    # the RTP packetization in the server.
+
+    def setupMovie(self):
+        if self.state == self.INIT:
+            self.sendRtspRequest(self.SETUP)
+
+    def playMovie(self):
+        if self.state == self.READY:
+            if len(self.frameBuffer) < self.MIN_BUFFER_FRAMES:
+                threading.Thread(target=self.waitForBufferThenPlay, daemon=True).start()
+            else:
+                self.bufferAndPlay()
+
     def listenRtp(self):
         """Nhận frames và đổ vào buffer."""
-        print("Starting to receive frames from server...")
-
         while self.isReceivingFrames:
             try:
                 self.rtpSocket.settimeout(0.02)
@@ -466,185 +535,58 @@ class Client:
                         if self.state == self.READY and len(self.frameBuffer) >= self.MIN_BUFFER_FRAMES:
                             self.master.after(0, self.updateButtons)
 
-
-                    # Cập nhật thống kê
-                    self.performance_stats['frames_received'] += 1
-                    self.performance_stats['last_frame_time'] = time.time()
-
                     self.rtpBuffer = b''
 
             except socket.timeout:
                 continue
-            except Exception as e:
-                if self.isReceivingFrames:
-                    print(f"Error receiving frame: {e}")
+            except:
                 break
 
-        # Cập nhật nút Play khi server ngừng gửi nhưng vẫn còn frame trong buffer
         if self.state == self.READY and len(self.frameBuffer) > 0:
             self.master.after(0, self.updateButtons)
 
-    def adjustPlaybackSpeed(self):
-        """Điều chỉnh tốc độ phát dựa trên buffer hiện tại và lịch sử"""
-        current_buffer = len(self.frameBuffer)
-        self.bufferHistory.append(current_buffer)
+    def exitClient(self):
+        """Teardown button handler."""
+        if self.state != self.INIT:
+            self.sendRtspRequest(self.TEARDOWN)
+            self.stopFrameReceiver()
+            self.stopPlayback()
 
-        # Tính trung bình buffer
-        avg_buffer = sum(self.bufferHistory) / len(self.bufferHistory)
+            os.remove(CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT)
+            self.master.destroy()
 
-        # Tỉ lệ buffer (0..1)
-        buffer_ratio = avg_buffer / self.bufferSize
+        self.print_statistics()
 
-        # Mốc min/max interval (giây/frame)
-        min_interval = 0.033  # ~30fps max speed
-        max_interval = 0.08  # ~12.5fps khi buffer thấp
+    def pauseMovie(self):
+        if self.state == self.PLAYING:
+            self.sendRtspRequest(self.PAUSE)
+            self.stopPlayback()
 
-        # Điều chỉnh tuyến tính
-        self.currentFrameInterval = max_interval - (max_interval - min_interval) * buffer_ratio
+    def sendDescribe(self):
+        """Gửi DESCRIBE request với kiểm tra HD"""
+        if self.state == self.INIT:
+            if self.videoMode.get() == "hd":
+                if not self.check_network_quality():
+                    return
 
-        # Điều chỉnh thêm cho HD
-        if self.videoMode.get() == "hd":
-            # HD cần ổn định hơn
-            self.currentFrameInterval = max(self.currentFrameInterval, 0.035)
+            # Áp dụng cài đặt HD/Normal
+            self.adjust_for_hd()
 
-    def stopFrameReceiver(self):
-        """Stop receiving frames"""
-        self.isReceivingFrames = False
-        print("Stop receiving frames....")
-
-    # --- HỆ THỐNG PHÁT VIDEO ---
-
-    def startPlayback(self):
-        """Bắt đầu phát video từ buffer"""
-        if self.isPlaying:
-            return
-
-        self.isPlaying = True
-        self.playEvent.clear()
-
-        self.startTime = time.time() - self.pausedTime
-
-        print(f"Starting playback with {len(self.frameBuffer)} frames in buffer...")
-
-        self.playbackThread = threading.Thread(
-            target=self.playFromBuffer,
-            daemon=True
-        )
-        self.playbackThread.start()
-
-    def stopPlayback(self):
-        """Dừng phát video"""
-        if not self.isPlaying:
-            return
-
-        self.isPlaying = False
-        self.playEvent.set()
-        self.pausedTime = self.currentPlaybackTime
-        print("Playback stopped.")
-
-    def playFromBuffer(self):
-        """Phát video từ buffer"""
-        frames_displayed = 0
-        last_speed_adjustment = time.time()
-
-        while self.isPlaying and not self.playEvent.is_set():
-            currentTime = time.time()
-
-            # Điều chỉnh tốc độ
-            if currentTime - last_speed_adjustment > 0.5:
-                self.adjustPlaybackSpeed()
-                last_speed_adjustment = currentTime
-
-            elapsed = currentTime - self.lastDisplayTime
-
-            if elapsed >= self.currentFrameInterval:
-                if self.frameBuffer:
-                    # Lấy frame từ buffer
-                    frameNbr, frame_data = self.frameBuffer.popleft()
-                    if self.frameNbr is not None and frameNbr != self.frameNbr + 1:
-                        print(f"Lost frame(s) detected: expected {self.frameNbr + 1}, got {frameNbr}")
-
-                    frames_displayed += 1
-                    self.updateBufferLabel()
-
-                    # Ghi frame ra file tạm
-                    cachename = self.writeFrame(frame_data)
-
-                    # Cập nhật GUI
-                    try:
-                        self.updateMovie(cachename)
-                    except Exception as e:
-                        print("Failed to update frame:", e)
-                    self.frameNbr = frameNbr
-                    print("Current Seq Num: ", self.frameNbr)
-
-                    # Cập nhật thời gian phát
-                    self.currentPlaybackTime = currentTime - self.startTime
-                    self.updateTimeLabel()
-
-                    self.lastDisplayTime = currentTime
-
-                else:
-                    # Buffer rỗng
-                    if self.endVideo:
-                        print("Video ended - No more frames in buffer")
-                        self.isPlaying = False
-                        self.state = self.READY
-                        self.master.after(0, self.updateButtons)
-                        break
-                    else:
-                        # doi them
-                        time.sleep(0.1)
-            else:
-                sleep_time = max(0.001, (self.currentFrameInterval - elapsed) / 2)
-                time.sleep(sleep_time)
-
-        print(f"Playback stopped. Total frames displayed: {frames_displayed}")
-
-    def updateBufferLabel(self):
-        """Cập nhật Buffer Label"""
-        current_length = len(self.frameBuffer)
-        buffer_ratio = current_length / self.bufferSize
-
-        fps = 1 / self.currentFrameInterval if self.currentFrameInterval > 0 else 0
-        text_content = f"Buffer: {current_length:03d}/{self.bufferSize} ({fps:.1f} fps)"
-
-        # Xác định màu đơn giản
-        if buffer_ratio < 0.2:
-            color = "red"
-        elif buffer_ratio < 0.5:
-            color = "orange"
-        elif buffer_ratio < 0.8:
-            color = "blue"
-        else:
-            color = "green"
-
-        # Cập nhật GUI
-        self.master.after(0, lambda: self.bufferLabel.config(
-            text=text_content, fg=color))
+            self.sendRtspRequest(self.DESCRIBE)
 
     def writeFrame(self, data):
         """Write the received frame to a temp image file. Return the image file."""
         cachename = CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
-
-        with self.cache_lock:
-            try:
-                with open(cachename, "wb") as file:
-                    file.write(data)
-            except Exception as e:
-                print("WriteFrame error:", e)
-
+        file = open(cachename, "wb")
+        file.write(data)
+        file.close()
         return cachename
 
     def updateMovie(self, imageFile):
         """Update the image file as video frame in the GUI."""
-        with self.cache_lock:
-            try:
-                photo = ImageTk.PhotoImage(Image.open(imageFile))
-                self.label.configure(image=photo, height=288)
-                self.label.image = photo
-            except Exception as e:
-                print("Failed to update frame:", e)
+        photo = ImageTk.PhotoImage(Image.open(imageFile))
+        self.label.configure(image=photo, height=288)
+        self.label.image = photo
 
     def connectToServer(self):
         """Connect to the Server. Start a new RTSP/TCP session."""
@@ -656,59 +598,39 @@ class Client:
 
     def sendRtspRequest(self, requestCode):
         """Send RTSP request to the server."""
+        # Update RTSP sequence number
         self.rtspSeq += 1
 
-        if requestCode == self.SETUP:
-            requestLine = f"SETUP {self.fileName} RTSP/1.0"
-        elif requestCode == self.PLAY:
-            requestLine = f"PLAY {self.fileName} RTSP/1.0"
-        elif requestCode == self.PAUSE:
-            requestLine = f"PAUSE {self.fileName} RTSP/1.0"
-        elif requestCode == self.TEARDOWN:
-            requestLine = f"TEARDOWN {self.fileName} RTSP/1.0"
-        elif requestCode == self.DESCRIBE:
-            requestLine = f"DESCRIBE {self.fileName} RTSP/1.0"
-        else:
-            return
-
-        request = requestLine + "\r\nCSeq: " + str(self.rtspSeq)
-        if requestCode != self.SETUP:
-            request += "\r\nSession: " + str(self.sessionId)
-        elif requestCode != self.DESCRIBE:
-            request += "\r\nTransport: RTP/UDP; client_port=" + str(self.rtpPort)
-
-        if requestCode == self.DESCRIBE:
-            request += "\r\nMode: " + self.videoMode.get()
-
-        self.requestSent = requestCode
-
-        # validate transitions
-        valid = False
+        # SETUP request
         if requestCode == self.SETUP and self.state == self.INIT:
-            valid = True
-        elif requestCode == self.PLAY and self.state == self.READY:
-            valid = True
-        elif requestCode == self.PAUSE and self.state == self.PLAYING:
-            valid = True
-        elif requestCode == self.TEARDOWN and self.state != self.INIT:
-            valid = True
-        elif requestCode == self.DESCRIBE:
-            valid = True
-
-        if not valid:
-            self.rtspSeq -= 1
-            print("Invalid RTSP state transition; request ignored.")
-            return
-
-        if requestCode == self.SETUP:
             threading.Thread(target=self.recvRtspReply, daemon=True).start()
+            request = f"SETUP {self.fileName} RTSP/1.0\r\nCSeq: {self.rtspSeq}\r\nTransport: RTP/UDP; client_port={self.rtpPort}"
+            self.requestSent = self.SETUP
 
-        try:
-            self.rtspSocket.sendall(request.encode("utf-8"))
-            print('\nData sent:\n' + request)
-        except Exception as e:
-            print("Failed to send RTSP request:", e)
-            traceback.print_exc()
+        # PLAY request
+        elif requestCode == self.PLAY and self.state == self.READY:
+            request = f"PLAY {self.fileName} RTSP/1.0\r\nCSeq: {self.rtspSeq}\r\nSession: {self.sessionId}"
+            self.requestSent = self.PLAY
+
+        # PAUSE request
+        elif requestCode == self.PAUSE and self.state == self.PLAYING:
+            request = f"PAUSE {self.fileName} RTSP/1.0\r\nCSeq: {self.rtspSeq}\r\nSession: {self.sessionId}"
+            self.requestSent = self.PAUSE
+
+        # TEARDOWN request
+        elif requestCode == self.TEARDOWN and self.state != self.INIT:
+            request = f"TEARDOWN {self.fileName} RTSP/1.0\r\nCSeq: {self.rtspSeq}\r\nSession: {self.sessionId}"
+            self.requestSent = self.TEARDOWN
+
+        # DESCRIBE request
+        elif requestCode == self.DESCRIBE:
+            request = (f"DESCRIBE {self.fileName} RTSP/1.0\r\nCSeq: {self.rtspSeq}\r\n"
+                       f"Mode: {self.videoMode.get()}")
+            self.requestSent = self.DESCRIBE
+
+        # Send the RTSP request
+        self.rtspSocket.sendall(request.encode("utf-8"))
+        print('\nData sent:\n' + request)
 
     def recvRtspReply(self):
         """Receive RTSP reply from the server."""
@@ -723,71 +645,35 @@ class Client:
 
     def parseRtspReply(self, data):
         """Parse the RTSP reply from the server."""
-        print("-" * 20 + "\nServer Reply:\n" + data + "\n" + "-" * 20)
-        lines = data.splitlines()
-        if len(lines) < 1:
-            print("Empty RTSP reply.")
-            return
-
-        status_parts = lines[0].split(' ', 2)
-        if len(status_parts) < 2:
-            print("Malformed status line:", lines[0])
-            return
-
-        try:
-            status_code = int(status_parts[1])
-        except:
-            print("Could not parse status code:", status_parts)
-            return
-
-        seqNum = None
-        session = None
-        for line in lines[1:]:
-            if line.lower().startswith("cseq"):
-                try:
-                    seqNum = int(line.split(':', 1)[1].strip())
-                except:
-                    pass
-            elif line.lower().startswith("session"):
-                try:
-                    session = int(line.split(':', 1)[1].strip())
-                except:
-                    pass
-
-        if seqNum is None:
-            print("CSeq not found in reply.")
-            return
+        lines = data.split('\n')
+        seqNum = int(lines[1].split(' ')[1])
 
         if seqNum == self.rtspSeq:
-            if self.sessionId == 0 and session is not None:
+            session = int(lines[2].split(' ')[1])
+            if self.sessionId == 0:
                 self.sessionId = session
 
-            if session is not None and self.sessionId != session:
-                print("Session ID mismatch: received", session, "expected", self.sessionId)
-                return
-
-            if status_code == 200:
-                if self.requestSent == self.SETUP:
-                    print("RTSP State: READY")
-                    self.state = self.READY
-                    self.updateButtons()
-                    self.openRtpPort()
-                    self.startFrameReceiver()
-                elif self.requestSent == self.PLAY:
-                    self.state = self.PLAYING
-                    print("RTSP State: PLAYING")
-                    self.updateButtons()
-                elif self.requestSent == self.PAUSE:
-                    self.state = self.READY
-                    print("RTSP State: READY (paused)")
-                    self.updateButtons()
-                elif self.requestSent == self.TEARDOWN:
-                    self.state = self.INIT
-                    print("RTSP State: INIT (teardown)")
-                    self.updateButtons()
-                    self.teardownAcked = 1
-            else:
-                print("RTSP Error: status code", status_code)
+            if self.sessionId == session:
+                if int(lines[0].split(' ')[1]) == 200:
+                    if self.requestSent == self.SETUP:
+                        print("RTSP State: READY")
+                        self.state = self.READY
+                        self.updateButtons()
+                        self.openRtpPort()
+                        self.startFrameReceiver()
+                    elif self.requestSent == self.PLAY:
+                        self.state = self.PLAYING
+                        print("RTSP State: PLAYING")
+                        self.updateButtons()
+                    elif self.requestSent == self.PAUSE:
+                        self.state = self.READY
+                        print("RTSP State: READY (paused)")
+                        self.updateButtons()
+                    elif self.requestSent == self.TEARDOWN:
+                        self.state = self.INIT
+                        print("RTSP State: INIT (teardown)")
+                        self.updateButtons()
+                        self.teardownAcked = 1
 
     def openRtpPort(self):
         """Open RTP socket bound to the client rtpPort."""
@@ -796,17 +682,16 @@ class Client:
         try:
             self.rtpSocket.bind(('', self.rtpPort))
             print("RTP Port opened at:", self.rtpPort)
-        except Exception as e:
-            tkMessageBox.showwarning('Unable to Bind', 'Unable to bind RTP PORT=%d: %s' % (self.rtpPort, e))
+        except:
+            tkMessageBox.showwarning('Unable to Bind', 'Unable to bind RTP PORT=%d' % self.rtpPort)
 
     def handler(self):
-        """Xử lý khi đóng GUI"""
+        """Handler on explicitly closing the GUI window."""
         self.stopPlayback()
         self.stopFrameReceiver()
 
         if tkMessageBox.askokcancel("Quit?", "Are you sure you want to quit?"):
             self.exitClient()
-        else:
+        else:  # When the user presses cancel, resume playing
             if self.state == self.READY and len(self.frameBuffer) > 0:
                 self.startPlayback()
-                print("Resumed playback from buffer.")

@@ -6,25 +6,26 @@ class VideoStream:
         hd: JPEG-like header (\xff\xd8) and footer (\xff\xd9)
         """
         self.filename = filename
-        self.mode = mode
-        self.frameNum = 0
-
         try:
             self.file = open(filename, 'rb')
         except:
-            raise IOError(f"Cannot open file {filename}")
+            raise IOError
+
+        self.frameNum = 0
+        self.mode = mode
 
     def nextFrame(self):
         """Get next frame depending on mode."""
         if self.mode == 'normal':
             # Read 5 bytes for frame length
-            data = self.file.read(5)
-            if not data:
-                return None  # End of file
-            framelength = int(data)
-            frame = self.file.read(framelength)
-            self.frameNum += 1
-            return frame
+            data = self.file.read(5) # Get the framelength from the first 5 bits
+            if data:
+                framelength = int(data)
+
+                # Read the current frame
+                data = self.file.read(framelength)
+                self.frameNum += 1
+            return data
 
         elif self.mode == 'hd':
             # Read until we find the JPEG header
@@ -38,24 +39,24 @@ class VideoStream:
                         break  # Start of frame found
 
             # Start collecting frame bytes
-            frame_data = b'\xff\xd8'
+            data = b'\xff\xd8'
             while True:
-                chunk = self.file.read(1024)  # read in chunks
+                chunk = self.file.read(1024)  # Get chunk
                 if not chunk:
                     break
-                frame_data += chunk
+                data += chunk
                 # Check if frame ends with \xff\xd9
-                if b'\xff\xd9' in frame_data[-1024:]:
+                if b'\xff\xd9' in data[-1024:]:
                     # split at end marker
-                    end_index = frame_data.rfind(b'\xff\xd9') + 2
-                    frame_data = frame_data[:end_index]
+                    end_index = data.rfind(b'\xff\xd9') + 2
+                    data = data[:end_index]
                     break
 
             self.frameNum += 1
-            return frame_data
+            return data
 
         else:
-            raise ValueError("Mode must be 'normal' or 'hd'")
+            raise ValueError
 
     def frameNbr(self):
         """Get frame number."""
