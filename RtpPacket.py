@@ -73,8 +73,3 @@ class RtpPacket:
         """Return the Marker bit (M bit) as 0 or 1."""
         return (self.header[1] >> 7) & 0x01
 
-    # CLIENT-SIDE CACHING - CREATE HASH FOR FRAME
-    def getFrameHash(self):
-        """Tạo hash duy nhất cho frame để sử dụng trong caching system"""
-        import hashlib
-        return hashlib.md5(self.payload).hexdigest()[:16]  # Lấy 16 ký tự đầu

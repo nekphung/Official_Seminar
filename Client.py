@@ -66,19 +66,26 @@ class Client:
         self.rtspSocket = None
         self.rtpSocket = None
 
+        # THÊM: Biến cho HD streaming
+        self.bandwidth_stats = {
+            'start_time': time.time(),
+            'total_bytes': 0,
+            'last_check': time.time(),
+            'total_packets': 0
+        }
+        self.total_lost_frames = 0
+        self.total_frames_received = 0  # Tổng số frame đã nhận
+        self.hd_buffer_size = 150  # Buffer lớn hơn cho HD
+        self.hd_min_buffer = 15  # Min buffer cho HD
+
         self.updateButtons()
-        self.setup_caching_system()
+        self.setup_buffer_system()
         self.cache_lock = threading.Lock()
         self.connectToServer()
 
-    def setup_caching_system(self):
-        """Thiết lập hệ thống caching"""
-        # Memory cache
-        self.frame_cache = {}
-        self.cache_hits = 0
-        self.cache_misses = 0
-
-        # Buffer
+    def setup_buffer_system(self):
+        """Thiết lập hệ thống buffer"""
+        # Buffer cho frames
         self.frameBuffer = deque()
         self.bufferSize = self.MAX_BUFFER_FRAMES
 
@@ -91,7 +98,6 @@ class Client:
         # Performance tracking
         self.performance_stats = {
             'frames_received': 0,
-            'frames_from_cache': 0,
             'start_time': time.time(),
             'last_frame_time': 0
         }
@@ -120,14 +126,16 @@ class Client:
         self.label = Label(self.videoFrame, bg="black")
         self.label.pack(fill=BOTH, expand=True)
 
-        # --- Info: Buffer + Cache + Time + Describe ---
+        # --- Info: Buffer + Time + Describe ---
         self.infoFrame = Frame(self.master)
         self.infoFrame.grid(row=1, column=0, columnspan=4, pady=5)
 
         self.bufferLabel = Label(self.infoFrame, text="Buffer: 0/120")
         self.bufferLabel.pack(side=LEFT, padx=5)
-        self.cacheLabel = Label(self.infoFrame, text="Cache: 0%")
-        self.cacheLabel.pack(side=LEFT, padx=5)
+
+        self.bandwidthLabel = Label(self.infoFrame, text="BW: 0 kbps")
+        self.bandwidthLabel.pack(side=LEFT, padx=5)
+
         self.timeLabel = Label(self.infoFrame, text="Time: 00:00")
         self.timeLabel.pack(side=LEFT, padx=5)
 
@@ -155,6 +163,121 @@ class Client:
         self.pause.pack(side=LEFT, padx=5)
         self.teardown = Button(self.controlFrame, width=15, text="Teardown", command=self.exitClient)
         self.teardown.pack(side=LEFT, padx=5)
+
+    # ==================== CÁC HÀM HD STREAMING ====================
+
+    def analyze_frame_loss(self, seq_num):
+        """Phân tích mất gói - đơn giản"""
+        lost_frames = 0
+        if self.prevSeqNum != 0 and seq_num > self.prevSeqNum + 1:
+            lost_frames = seq_num - self.prevSeqNum - 1
+            self.total_lost_frames += lost_frames
+            print(f"Lost {lost_frames} frame(s): {self.prevSeqNum + 1} -> {seq_num}")
+
+        self.prevSeqNum = seq_num
+
+    def calculate_bandwidth(self, packet_size):
+        """Tính băng thông đơn giản"""
+        current_time = time.time()
+
+        # Cập nhật thống kê
+        self.bandwidth_stats['total_bytes'] += packet_size
+        self.bandwidth_stats['total_packets'] += 1
+
+        # Tính bandwidth mỗi 2 giây
+        if current_time - self.bandwidth_stats['last_check'] >= 2:
+            elapsed = current_time - self.bandwidth_stats['last_check']
+            if elapsed > 0:
+                bytes_per_sec = self.bandwidth_stats['total_bytes'] / elapsed
+                kbps = (bytes_per_sec * 8) / 1000  # chuyển sang kbps
+
+                # Update bandwidth label
+                if hasattr(self, 'bandwidthLabel'):
+                    self.bandwidthLabel.config(text=f"BW: {kbps:.0f} kbps")
+
+                    if kbps < 1000:  # Dưới 1 Mbps
+                        self.bandwidthLabel.config(fg="red")
+                    elif kbps < 2000:  # Dưới 2 Mbps
+                        self.bandwidthLabel.config(fg="orange")
+                    else:
+                        self.bandwidthLabel.config(fg="green")
+
+                # Reset cho lần sau
+                self.bandwidth_stats['total_bytes'] = 0
+                self.bandwidth_stats['last_check'] = current_time
+
+    def adjust_for_hd(self):
+        """Điều chỉnh cài đặt cho video HD"""
+        if self.videoMode.get() == "hd":
+            # Tăng buffer cho HD
+            self.bufferSize = self.hd_buffer_size
+            self.MIN_BUFFER_FRAMES = self.hd_min_buffer
+
+            # Giảm timeout cho latency thấp
+            self.frameReceiveTimeout = 1.5
+
+            # Điều chỉnh tốc độ phát cho HD
+            self.baseFrameInterval = 0.033  # ~30fps cho HD
+
+            # Update network label
+            if hasattr(self, 'networkLabel'):
+                self.networkLabel.config(text="Net: HD Mode")
+        else:
+            # Normal mode
+            self.bufferSize = self.MAX_BUFFER_FRAMES
+            self.MIN_BUFFER_FRAMES = 10
+            self.frameReceiveTimeout = 2.0
+            self.baseFrameInterval = 0.042  # ~24fps
+
+            if hasattr(self, 'networkLabel'):
+                self.networkLabel.config(text="Net: Normal Mode")
+
+    def check_network_quality(self):
+        """Kiểm tra chất lượng mạng có đủ cho HD không"""
+        if self.videoMode.get() == "hd":
+            # Tính bandwidth trung bình
+            elapsed = time.time() - self.bandwidth_stats['start_time']
+            if elapsed > 5:  # Chỉ kiểm tra sau 5 giây
+                avg_kbps = (self.bandwidth_stats['total_bytes'] * 8) / (elapsed * 1000)
+
+                # Cần ít nhất 1.5 Mbps cho HD
+                required_bandwidth = 1500
+
+                if avg_kbps < required_bandwidth:
+                    if hasattr(self, 'networkLabel'):
+                        self.networkLabel.config(text=f"Net: Low ({avg_kbps:.0f}kbps)", fg="red")
+                    return False
+                else:
+                    if hasattr(self, 'networkLabel'):
+                        self.networkLabel.config(text=f"Net: Good ({avg_kbps:.0f}kbps)", fg="green")
+                    return True
+        return True
+
+    def print_statistics(self):
+        """In thống kê khi teardown"""
+        elapsed_time = time.time() - self.bandwidth_stats['start_time']
+
+        if elapsed_time > 0 and self.total_frames_received > 0:
+            # Tính loss rate
+            loss_rate = (self.total_lost_frames / self.total_frames_received) * 100
+
+            # Tính bandwidth trung bình
+            avg_kbps = (self.bandwidth_stats['total_bytes'] * 8) / (elapsed_time * 1000)
+
+            print("\n" + "=" * 50)
+            print("VIDEO STREAMING STATISTICS")
+            print("=" * 50)
+            print(f"Total Frames Received: {self.total_frames_received}")
+            print(f"Total Lost Frames: {self.total_lost_frames}")
+            print(f"Loss Rate: {loss_rate:.2f}%")
+            print(f"Average Bandwidth: {avg_kbps:.0f} kbps")
+            print(f"Total Duration: {elapsed_time:.1f} seconds")
+            print(f"Total Packets: {self.bandwidth_stats['total_packets']}")
+            print(f"Buffer Size Used: {self.bufferSize}")
+            print("=" * 50 + "\n")
+
+
+    # ==================== CÁC HÀM GỐC ====================
 
     def updateTimeLabel(self):
         """Convert total seconds to MM:SS format and update timeLabel."""
@@ -219,7 +342,17 @@ class Client:
         return False
 
     def sendDescribe(self):
+        """Gửi DESCRIBE request với kiểm tra HD"""
         if self.state == self.INIT:
+            # Kiểm tra network trước khi chọn HD
+            if self.videoMode.get() == "hd":
+                if not self.check_network_quality():
+                    print("⚠️ Network not good enough for HD")
+                    # Vẫn cho phép thử nhưng cảnh báo
+
+            # Áp dụng cài đặt HD/Normal
+            self.adjust_for_hd()
+
             self.sendRtspRequest(self.DESCRIBE)
 
     def setupMovie(self):
@@ -233,11 +366,13 @@ class Client:
         if self.state != self.INIT:
             self.sendRtspRequest(self.TEARDOWN)
         self.playEvent.set()
+
         try:
             self.master.destroy()
         except:
             pass
-        self.cleanup_cache()
+        self.print_statistics()
+
 
     def pauseMovie(self):
         if self.state == self.PLAYING:
@@ -264,7 +399,7 @@ class Client:
             elif len(self.frameBuffer) < self.MIN_BUFFER_FRAMES:
                 self.statusLabel.config(text="Status: Buffering...", fg="orange")
                 print(f"Buffer low ({len(self.frameBuffer)} frames), waiting...")
-                threading.Thread(target=self.waitForBufferThenPlay, daemon=True).start() # chạy luồng song song
+                threading.Thread(target=self.waitForBufferThenPlay, daemon=True).start()  # chạy luồng song song
             else:
                 self.bufferAndPlay()
 
@@ -306,8 +441,8 @@ class Client:
 
             self.sendRtspRequest(self.PLAY)
             while self.state != self.PLAYING:
-                time.sleep(0.01) # chờ một xíu
-            self.startPlayback() # bắt đầu phát video
+                time.sleep(0.01)  # chờ một xíu
+            self.startPlayback()  # bắt đầu phát video
 
             self.master.after(0, lambda: self.statusLabel.config(
                 text="Status: Playing", fg="green"))
@@ -323,13 +458,13 @@ class Client:
             print("Starting to receive frames...")
 
             self.frameReceiverThread = threading.Thread(
-                target=self.receiveAndCacheFrames,
+                target=self.listenRtp,
                 daemon=True
             )
             self.frameReceiverThread.start()
 
-    def receiveAndCacheFrames(self):
-        """Nhận frames, cache lại, và đổ vào buffer."""
+    def listenRtp(self):
+        """Nhận frames và đổ vào buffer."""
         print("Starting to receive frames from server...")
 
         while self.isReceivingFrames:
@@ -355,6 +490,10 @@ class Client:
                 markerBit = rtpPacket.marker()
                 payload = rtpPacket.getPayload()
 
+
+                self.calculate_bandwidth(len(data))  # Tính băng thông
+
+
                 # Ghép frame theo fragmentation
                 if currFrameNbr != self.currentFrameNum:
                     self.rtpBuffer = b''
@@ -365,21 +504,20 @@ class Client:
                 # Nếu frame đã hoàn chỉnh
                 if markerBit == 1:
                     self.lastFrameReceivedTime = time.time()
-                    frame_hash = rtpPacket.getFrameHash()
-                    # Cache frame nếu chưa có
-                    """ if frame_hash not in self.frame_cache:
-                        self.cache_frame(frame_hash, self.rtpBuffer)"""
 
+                    self.analyze_frame_loss(currFrameNbr)
                     # Thêm frame vào buffer
                     if len(self.frameBuffer) < self.bufferSize:
-                        self.frameBuffer.append((currFrameNbr, self.rtpBuffer, frame_hash))
+                        self.frameBuffer.append((currFrameNbr, self.rtpBuffer))
                         self.updateBufferLabel()
+
+                        self.total_frames_received += 1
 
                         if self.state == self.READY and len(self.frameBuffer) >= self.MIN_BUFFER_FRAMES:
                             self.master.after(0, self.updateButtons)
                     else:
                         # Buffer full
-                        if not self.bufferFullPause: # không đầy
+                        if not self.bufferFullPause:  # không đầy
                             self.bufferFullPause = True
                             self.isReceivingFrames = False  # tạm dừng nhận
                             print("Buffer full. Notifying server to pause sending...")
@@ -394,10 +532,6 @@ class Client:
                     # Cập nhật thống kê
                     self.performance_stats['frames_received'] += 1
                     self.performance_stats['last_frame_time'] = time.time()
-
-                    # Update cache GUI
-                    if currFrameNbr % 10 == 0:
-                        self.update_cache_display()
 
                     self.rtpBuffer = b''
 
@@ -419,39 +553,7 @@ class Client:
         print("Stopped receiving frames")
         # Cập nhật nút Play khi server ngừng gửi nhưng vẫn còn frame trong buffer
         if self.state == self.READY and len(self.frameBuffer) > 0:
-            #self.serverStoppedSending = True
             self.master.after(0, self.updateButtons)
-
-    # --- Caching methods ---
-    def get_cached_frame(self, frame_hash):
-        """Lấy frame từ cache nếu tồn tại"""
-        if frame_hash in self.frame_cache:
-            self.cache_hits += 1
-            return self.frame_cache[frame_hash]
-        self.cache_misses += 1
-        return None
-
-    def cache_frame(self, frame_hash, frame_data):
-        """Lưu frame vào cache"""
-        if frame_hash not in self.frame_cache:
-            self.frame_cache[frame_hash] = frame_data
-
-            if len(self.frame_cache) > 200:
-                oldest_key = next(iter(self.frame_cache))
-                del self.frame_cache[oldest_key]
-
-    def update_cache_display(self):
-        """Cập nhật cache label"""
-        total = self.cache_hits + self.cache_misses
-        if total > 0:
-            hit_rate = (self.cache_hits / total) * 100
-            self.cacheLabel.config(text=f"Cache: {hit_rate:.1f}%")
-            if hit_rate > 80:
-                self.cacheLabel.config(fg="green")
-            elif hit_rate > 60:
-                self.cacheLabel.config(fg="orange")
-            else:
-                self.cacheLabel.config(fg="red")
 
     def adjustPlaybackSpeed(self):
         """Điều chỉnh tốc độ phát dựa trên buffer hiện tại và lịch sử"""
@@ -471,8 +573,10 @@ class Client:
         # Điều chỉnh tuyến tính
         self.currentFrameInterval = max_interval - (max_interval - min_interval) * buffer_ratio
 
-        # Chỉ in debug khi cần
-        # print(f"Buffer ratio: {buffer_ratio:.2f}, Frame interval: {self.currentFrameInterval:.3f}s")
+        # Điều chỉnh thêm cho HD
+        if self.videoMode.get() == "hd":
+            # HD cần ổn định hơn
+            self.currentFrameInterval = max(self.currentFrameInterval, 0.035)
 
     def stopFrameReceiver(self):
         """Stop receiving frames"""
@@ -547,24 +651,12 @@ class Client:
             if elapsed >= self.currentFrameInterval:
                 if self.frameBuffer:
                     # Lấy frame từ buffer
-                    frameNbr, frame_data, frame_hash = self.frameBuffer.popleft()
+                    frameNbr, frame_data = self.frameBuffer.popleft()
                     if self.frameNbr is not None and frameNbr != self.frameNbr + 1:
                         print(f"Lost frame(s) detected: expected {self.frameNbr + 1}, got {frameNbr}")
-                    self.frameNbr = frameNbr
 
                     frames_displayed += 1
                     self.updateBufferLabel()
-
-                    # Chỉ in seq num thôi
-                    print(f"Current Seq Num: {frameNbr}")
-
-                    # Kiểm tra cache
-                    cached_frame = self.get_cached_frame(frame_hash)
-                    if cached_frame:
-                        frame_data = cached_frame
-                        self.performance_stats['frames_from_cache'] += 1
-
-                    self.cache_frame(frame_hash, frame_data)
 
                     # Ghi frame ra file tạm
                     cachename = self.writeFrame(frame_data)
@@ -574,8 +666,8 @@ class Client:
                         self.updateMovie(cachename)
                     except Exception as e:
                         print("Failed to update frame:", e)
-
                     self.frameNbr = frameNbr
+                    print("Current Seq Num: ", self.frameNbr)
 
                     # Cập nhật thời gian phát
                     self.currentPlaybackTime = currentTime - self.startTime
@@ -602,12 +694,11 @@ class Client:
         print(f"Playback stopped. Total frames displayed: {frames_displayed}")
 
     def updateBufferLabel(self):
-        """Cập nhật Buffer Label - CHỈ HIỂN THỊ SỐ THÔI"""
+        """Cập nhật Buffer Label"""
         current_length = len(self.frameBuffer)
         buffer_ratio = current_length / self.bufferSize
 
         fps = 1 / self.currentFrameInterval if self.currentFrameInterval > 0 else 0
-        # CHỈ hiển thị số, không có [LOW], [HIGH], etc.
         text_content = f"Buffer: {current_length:03d}/{self.bufferSize} ({fps:.1f} fps)"
 
         # Xác định màu đơn giản
@@ -623,28 +714,6 @@ class Client:
         # Cập nhật GUI
         self.master.after(0, lambda: self.bufferLabel.config(
             text=text_content, fg=color))
-
-    def cleanup_cache(self):
-        """Hiển thị thống kê cache khi thoát"""
-        total_frames = self.cache_hits + self.cache_misses
-        if total_frames > 0:
-            efficiency = (self.cache_hits / total_frames) * 100
-            print(f"\nCache statistics:")
-            print(f"Cache efficiency: {efficiency:.1f}%")
-            print(f"Cache hits: {self.cache_hits}, misses: {self.cache_misses}")
-            print(f"Frames in cache: {len(self.frame_cache)}")
-            print(f"Total frames received: {self.performance_stats['frames_received']}")
-
-    def listenRtp(self):
-        """Keep for compatibility"""
-        while not self.playEvent.is_set():
-            try:
-                self.rtpSocket.settimeout(0.1)
-                data, _ = self.rtpSocket.recvfrom(65536)
-            except socket.timeout:
-                continue
-            except Exception:
-                break
 
     def writeFrame(self, data):
         """Write the received frame to a temp image file. Return the image file."""
@@ -795,7 +864,7 @@ class Client:
                     print("RTSP State: READY")
                     self.updateButtons()
                     self.openRtpPort()
-                    self.startFrameReceiver() # bắt đầu nhận khung
+                    self.startFrameReceiver()  # bắt đầu nhận khung
                 elif self.requestSent == self.PLAY:
                     self.state = self.PLAYING
                     print("RTSP State: PLAYING")
